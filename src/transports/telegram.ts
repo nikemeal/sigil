@@ -31,6 +31,7 @@ export class TelegramTransport {
   private gateway: Gateway;
   private allowedChatIds: Set<number>;
   private activeChatId: number | null = null;
+  private directReplies = new Set<string>(); // Track IDs we've already sent directly
 
   constructor(gateway: Gateway, config: TelegramConfig) {
     this.gateway = gateway;
@@ -77,6 +78,9 @@ export class TelegramTransport {
 
         clearInterval(typingInterval);
 
+        // Mark as directly handled so the notification listener doesn't duplicate it
+        this.directReplies.add(response.id);
+
         // Send the response, splitting if too long for Telegram's 4096 char limit
         await this.sendResponse(ctx, response);
 
@@ -97,7 +101,13 @@ export class TelegramTransport {
   /** Register for async notifications from the gateway (task completions, etc.) */
   private setupNotifications(): void {
     this.gateway.onResponse('telegram', async (response: Response) => {
-      // This fires when a background task completes and wants to notify via Telegram
+      // Skip responses we already sent directly (avoid duplicates)
+      if (this.directReplies.has(response.id)) {
+        this.directReplies.delete(response.id);
+        return;
+      }
+
+      // This fires for async notifications (task completions, health alerts, etc.)
       if (!this.activeChatId) {
         console.warn('[telegram] Got notification but no active chat ID — message dropped');
         return;
