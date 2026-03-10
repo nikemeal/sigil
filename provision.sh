@@ -280,6 +280,9 @@ case "${1:-}" in
   update)
     echo "Pulling latest..."
     cd /opt/sigil
+    # Ensure sigil user owns everything (fixes clones done as root/other users)
+    sudo chown -R sigil:sigil /opt/sigil
+    sudo -u sigil git config --global --add safe.directory /opt/sigil 2>/dev/null
     sudo -u sigil git pull --ff-only
     sudo -u sigil npm install
     sudo systemctl restart sigil

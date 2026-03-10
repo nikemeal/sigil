@@ -80,6 +80,9 @@ export class TelegramTransport {
         // Send the response, splitting if too long for Telegram's 4096 char limit
         await this.sendResponse(ctx, response);
 
+        // Also push to all other transports (TUI, web, etc.) so messages are consolidated
+        this.gateway.broadcastExcept('telegram', response);
+
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[telegram] Error processing message: ${message}`);

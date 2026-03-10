@@ -97,16 +97,17 @@ async function main() {
   // Gateway needs to exist before TaskRunner (for the notify callback)
   const gateway = new Gateway();
 
-  // Notify function — sends async notifications to the user's transport
-  const notify = async (transport: Transport, threadId: string | undefined, message: string) => {
+  // Notify function — broadcasts to ALL active transports
+  const notify = async (_transport: Transport, _threadId: string | undefined, message: string) => {
     const response = {
       id: `notify_${Date.now()}`,
       replyTo: 'task',
       content: message,
       timestamp: new Date(),
     };
-    gateway.notify(transport, response);
-    console.log(`[notify → ${transport}] ${message.slice(0, 100)}...`);
+    gateway.broadcast(response);
+    const active = gateway.getActiveTransports();
+    console.log(`[notify → ${active.join(', ')}] ${message.slice(0, 100)}...`);
   };
 
   // Bind the late reference so health monitor can use it

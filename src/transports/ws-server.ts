@@ -62,6 +62,9 @@ export async function startWSServer(
         };
 
         socket.send(JSON.stringify(reply));
+
+        // Also push to all other transports (Telegram, etc.) so messages are consolidated
+        gateway.broadcastExcept('web', response);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         socket.send(JSON.stringify({ type: 'error', content: message }));

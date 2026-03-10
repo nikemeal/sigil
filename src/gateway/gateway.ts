@@ -26,7 +26,7 @@ export class Gateway {
 
   /** Send a message into the system (called by transports).
    *  Returns the response directly — does NOT fire listeners.
-   *  Listeners are only for async notifications via notify(). */
+   *  Listeners are only for async notifications via notify/broadcast. */
   async send(message: Omit<Message, 'id' | 'timestamp'>): Promise<Response> {
     if (!this.handler) {
       throw new Error('No message handler registered. Is the agent running?');
@@ -46,12 +46,38 @@ export class Gateway {
     return this.send({ source, content, threadId });
   }
 
-  /** Push an async notification to a transport's listeners.
-   *  Used by task runner, health monitor, etc. — NOT for direct replies. */
+  /** Push an async notification to a single transport's listeners. */
   notify(transport: Transport, response: Response): void {
     const transportListeners = this.listeners.get(transport) ?? [];
     for (const listener of transportListeners) {
       listener(response);
     }
+  }
+
+  /** Broadcast an async notification to ALL active transports. */
+  broadcast(response: Response): void {
+    for (const [, transportListeners] of this.listeners) {
+      for (const listener of transportListeners) {
+        listener(response);
+      }
+    }
+  }
+
+  /** Broadcast to all active transports EXCEPT the specified one.
+   *  Used after a direct reply — the originating transport already has the response. */
+  broadcastExcept(exclude: Transport, response: Response): void {
+    for (const [transport, transportListeners] of this.listeners) {
+      if (transport === exclude) continue;
+      for (const listener of transportListeners) {
+        listener(response);
+      }
+    }
+  }
+
+  /** Get which transports have listeners registered (i.e. are active). */
+  getActiveTransports(): Transport[] {
+    return Array.from(this.listeners.keys()).filter(
+      t => (this.listeners.get(t)?.length ?? 0) > 0
+    );
   }
 }
