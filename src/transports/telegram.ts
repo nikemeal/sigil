@@ -72,7 +72,7 @@ export class TelegramTransport {
         const response = await this.gateway.sendText(
           content,
           'telegram',
-          `telegram_${chatId}`,
+          'main',
         );
 
         clearInterval(typingInterval);
@@ -134,7 +134,7 @@ export class TelegramTransport {
           const response = await this.gateway.sendText(
             'Give me a brief status update: what tasks are active, any recent completions, and your current state.',
             'telegram',
-            `telegram_${ctx.chat?.id}`,
+            'main',
           );
           await this.sendResponse(ctx, response);
         } catch {
@@ -147,7 +147,7 @@ export class TelegramTransport {
           const response = await this.gateway.sendText(
             'List all active tasks with their status.',
             'telegram',
-            `telegram_${ctx.chat?.id}`,
+            'main',
           );
           await this.sendResponse(ctx, response);
         } catch {

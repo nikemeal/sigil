@@ -52,7 +52,7 @@ export async function startWSServer(
         const response = await gateway.sendText(
           msg.content,
           'web',
-          msg.threadId ?? `ws_${Date.now()}`,
+          msg.threadId ?? 'main',
         );
 
         const reply: WSResponse = {
