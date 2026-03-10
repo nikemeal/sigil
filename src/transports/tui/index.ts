@@ -1,6 +1,6 @@
 import * as readline from 'node:readline';
 import chalk from 'chalk';
-import type { Gateway } from '../gateway/gateway.js';
+import type { Gateway } from '../../gateway/gateway.js';
 
 export function startTUI(gateway: Gateway): void {
   const rl = readline.createInterface({

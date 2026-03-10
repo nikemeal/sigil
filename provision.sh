@@ -102,6 +102,9 @@ fi
 if [[ -d "${SIGIL_HOME}/src" ]]; then
   log "Sigil source already exists, pulling latest..."
   cd "$SIGIL_HOME"
+  # Fix ownership warning when running as root on a user-owned repo
+  git config --global --add safe.directory "$SIGIL_HOME"
+  sudo -u "$SIGIL_USER" git config --global --add safe.directory "$SIGIL_HOME"
   sudo -u "$SIGIL_USER" git pull --ff-only || warn "Git pull failed, continuing with existing code"
 else
   log "Cloning Sigil..."

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { LLMProvider, CompletionRequest, CompletionResponse, ToolSchema } from '../gateway/types.js';
+import type { LLMProvider, CompletionRequest, CompletionResponse, ToolSchema } from '../../gateway/types.js';
 
 export class AnthropicProvider implements LLMProvider {
   private client: Anthropic;
@@ -19,7 +19,7 @@ export class AnthropicProvider implements LLMProvider {
       model: this.model,
       max_tokens: request.maxTokens ?? 8192,
       system: request.system,
-      messages: request.messages.map(m => ({
+      messages: request.messages.map((m: { role: string; content: string }) => ({
         role: m.role,
         content: m.content,
       })),
