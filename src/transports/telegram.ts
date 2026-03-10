@@ -36,6 +36,7 @@ export class TelegramTransport {
     this.gateway = gateway;
     this.bot = new Bot(config.token);
     this.allowedChatIds = new Set(config.allowedChatIds ?? []);
+    this.activeChatId = this.loadChatId();
 
     this.setupHandlers();
     this.setupNotifications();
@@ -48,6 +49,7 @@ export class TelegramTransport {
 
       const chatId = ctx.chat.id;
       this.activeChatId = chatId;
+      this.saveChatId(chatId);
 
       const text = ctx.message.text;
 
@@ -100,18 +102,43 @@ export class TelegramTransport {
   /** Register for async notifications from the gateway (task completions, etc.) */
   private setupNotifications(): void {
     this.gateway.onResponse('telegram', async (response: Response) => {
-      // This fires for async notifications (task completions, health alerts, etc.)
-      if (!this.activeChatId) {
-        console.warn('[telegram] Got notification but no active chat ID — message dropped');
+      // This fires for cross-transport broadcasts and async notifications
+      const chatId = this.activeChatId ?? this.loadChatId();
+      if (!chatId) {
+        console.warn('[telegram] Got notification but no active chat ID — send a message to the bot first');
         return;
       }
 
       try {
-        await this.sendText(this.activeChatId, response.content);
+        await this.sendText(chatId, response.content);
       } catch (err) {
         console.error(`[telegram] Failed to send notification: ${err}`);
       }
     });
+  }
+
+  /** Save chat ID to disk so it survives restarts */
+  private saveChatId(chatId: number): void {
+    try {
+      const { writeFileSync, mkdirSync } = require('node:fs');
+      const { resolve, dirname } = require('node:path');
+      const path = resolve('data', 'telegram_chat_id');
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, String(chatId), 'utf-8');
+    } catch { /* non-critical */ }
+  }
+
+  /** Load chat ID from disk */
+  private loadChatId(): number | null {
+    try {
+      const { readFileSync } = require('node:fs');
+      const { resolve } = require('node:path');
+      const path = resolve('data', 'telegram_chat_id');
+      const id = parseInt(readFileSync(path, 'utf-8').trim());
+      return isNaN(id) ? null : id;
+    } catch {
+      return null;
+    }
   }
 
   private async handleCommand(ctx: Context, text: string): Promise<void> {

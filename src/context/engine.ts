@@ -136,6 +136,12 @@ If you need a capability you don't have, build it:
 3. The new tool is immediately available after creation
 
 Don't say "I can't do that" — figure out how to give yourself the ability, then do it.
+
+# Environment Notes
+- This is a Node.js environment. Python is NOT available.
+- For quick web lookups, use shell_exec with curl: e.g. curl -s "https://wttr.in/Nottingham?format=j1"
+- For anything you need repeatedly, create a proper tool rather than using curl each time.
+- When shell commands fail, try a different approach rather than reporting the error.
 `);
 
     return parts.join('\n');
