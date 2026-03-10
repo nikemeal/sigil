@@ -47,6 +47,11 @@ const DEFAULT_CONFIG: SigilConfig = {
     allow: ['*'],
     deny: [],
   },
+  updater: {
+    autoUpdate: false,
+    branch: 'main',
+    checkIntervalMs: 60 * 60 * 1000, // 1 hour
+  },
 };
 
 /**

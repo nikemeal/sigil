@@ -17,6 +17,13 @@ import { SkillLoader, createSkillManagementTool } from './skills/loader.js';
 import { SelfExtender } from './skills/self-extend.js';
 import { LearningStore, createLearningTools } from './skills/learning.js';
 import { startTUI } from './transports/tui/index.js';
+import { startTelegram } from './transports/telegram.js';
+import { startWSServer } from './transports/ws-server.js';
+import {
+  HealthMonitor, createHealthTool,
+  ollamaCheck, anthropicCheck, telegramCheck, systemCheck, databaseCheck,
+} from './health/monitor.js';
+import { Updater, createUpdateTools } from './updater/updater.js';
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -35,7 +42,21 @@ async function main() {
 
   // 3. Set up core systems
   const context = new ContextEngine(config);
-  const llm = await buildLLM(config);
+
+  // Create health monitor early so buildLLM can register LLM checks
+  // notify is defined later, so we use a late-bound reference
+  let notifyFn: ((transport: Transport, threadId: string | undefined, message: string) => Promise<void>) | null = null;
+
+  const health = new HealthMonitor((report) => {
+    const downComponents = report.components
+      .filter(c => c.status === 'down')
+      .map(c => `${c.component}: ${c.message}`);
+    if (downComponents.length > 0 && notifyFn) {
+      notifyFn('telegram', undefined, `⚠ Health alert:\n${downComponents.join('\n')}`);
+    }
+  });
+
+  const llm = await buildLLM(config, health);
 
   // 4. Set up skills (hot-reloadable)
   const skills = new SkillLoader('./skills');
@@ -94,6 +115,9 @@ async function main() {
     console.log(`[notify → ${transport}] ${message.slice(0, 100)}...`);
   };
 
+  // Bind the late reference so health monitor can use it
+  notifyFn = notify;
+
   const taskRunner = new TaskRunner(llm, tools, context, taskStore, notify);
 
   // Register task tools
@@ -114,15 +138,70 @@ async function main() {
   }
 
   // 9. Start transports
-  if (config.transports.tui.enabled) {
+
+  // WebSocket server — used by TUI client and future web UI
+  if (config.transports.web.enabled) {
+    await startWSServer(gateway, config.transports.web.host, config.transports.web.port);
+  }
+
+  // TUI — only in foreground/dev mode (when stdin is a terminal)
+  if (config.transports.tui.enabled && process.stdin.isTTY) {
     startTUI(gateway);
   }
 
-  // TODO: web UI, telegram, discord transports
+  let telegram: ReturnType<typeof startTelegram> = null;
+  if (config.transports.telegram.enabled && config.transports.telegram.tokenEnv) {
+    telegram = startTelegram(gateway, config.transports.telegram.tokenEnv);
+  }
+
+  // 10. Health monitoring — register remaining component checks
+  health.register('system', systemCheck());
+  health.register('database', databaseCheck(resolve(config.memory.dbPath)));
+
+  if (config.transports.telegram.enabled) {
+    health.register('telegram', telegramCheck(config.transports.telegram.tokenEnv ?? ''),
+      // Heal: restart the Telegram bot
+      async () => {
+        try {
+          telegram?.stop();
+          telegram = startTelegram(gateway, config.transports.telegram.tokenEnv ?? '');
+          return telegram !== null;
+        } catch { return false; }
+      },
+    );
+  }
+
+  tools.register(createHealthTool(health));
+
+  // Start hourly health checks
+  health.startSchedule(60 * 60 * 1000);
+
+  // 11. Auto-updater
+  const updater = new Updater(
+    {
+      autoUpdate: config.updater.autoUpdate,
+      checkIntervalMs: config.updater.checkIntervalMs,
+      repoDir: process.cwd(),
+      branch: config.updater.branch,
+    },
+    (message) => {
+      // Notify about updates via Telegram (or console if no transport)
+      notifyFn?.('telegram', undefined, message);
+    },
+  );
+
+  for (const updateTool of createUpdateTools(updater)) {
+    tools.register(updateTool);
+  }
+
+  updater.startSchedule();
 
   // Graceful shutdown
   const shutdown = () => {
     console.log('\n[sigil] Shutting down...');
+    updater.stop();
+    health.stop();
+    telegram?.stop();
     skills.stop();
     context.close();
     db.close();
@@ -133,7 +212,10 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-async function buildLLM(config: ReturnType<typeof loadConfig>): Promise<LLMProvider> {
+async function buildLLM(
+  config: ReturnType<typeof loadConfig>,
+  health?: HealthMonitor,
+): Promise<LLMProvider> {
   const strategy = config.routing.strategy;
   const cloudApiKey = process.env[config.llm.apiKeyEnv];
   const hasCloud = !!cloudApiKey;
@@ -147,14 +229,19 @@ async function buildLLM(config: ReturnType<typeof loadConfig>): Promise<LLMProvi
       config.llm.local.baseUrl ?? 'http://localhost:11434'
     );
 
-    const health = await ollama.healthCheck();
-    if (health.ok) {
+    const check = await ollama.healthCheck();
+    if (check.ok) {
       localProvider = ollama;
       hasLocal = true;
       console.log(`[sigil] Local LLM: ${config.llm.local.model} via Ollama ✓`);
+      health?.register('ollama', ollamaCheck(ollama));
     } else {
-      console.warn(`[sigil] Local LLM unavailable: ${health.error}`);
+      console.warn(`[sigil] Local LLM unavailable: ${check.error}`);
     }
+  }
+
+  if (hasCloud) {
+    health?.register('anthropic', anthropicCheck(cloudApiKey!));
   }
 
   if (hasLocal && hasCloud) {

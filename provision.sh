@@ -289,8 +289,26 @@ case "${1:-}" in
     sqlite3 /opt/sigil/data/memory.db \
       "SELECT substr(id,1,8) as id, status, substr(objective,1,60) as objective, updated_at FROM tasks ORDER BY updated_at DESC LIMIT 20;"
     ;;
+  tui)
+    cd /opt/sigil && npx tsx src/transports/tui-client.ts "${@:2}"
+    ;;
+  health)
+    echo "Running health checks..."
+    cd /opt/sigil && npx tsx -e "
+      const ws = new (await import('ws')).WebSocket('ws://127.0.0.1:3000/ws');
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ type: 'message', content: 'Run a full health check on all systems and report the results.' }));
+      });
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'response') { console.log(msg.content); ws.close(); }
+      });
+      ws.on('error', () => { console.error('Cannot connect — is Sigil running?'); process.exit(1); });
+      setTimeout(() => { console.error('Timeout'); process.exit(1); }, 30000);
+    "
+    ;;
   *)
-    echo "Usage: sigil {start|stop|restart|status|logs|logs-recent|config|env|onboard|update|db|tasks}"
+    echo "Usage: sigil {start|stop|restart|status|logs|logs-recent|config|env|onboard|update|tui|db|tasks}"
     echo ""
     echo "  start        Start Sigil service"
     echo "  stop         Stop Sigil service"
@@ -302,6 +320,8 @@ case "${1:-}" in
     echo "  env          Edit API keys (.env)"
     echo "  onboard      Run onboarding wizard"
     echo "  update       Pull latest code and restart"
+    echo "  tui          Open terminal chat (connects to running service)"
+    echo "  health       Run health checks on all systems"
     echo "  db [sql]     Query the SQLite database"
     echo "  tasks        List recent tasks"
     ;;

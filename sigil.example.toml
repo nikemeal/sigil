@@ -66,7 +66,7 @@ max_recall = 10
 enabled = true
 
 [transports.web]
-enabled = false
+enabled = true
 port = 3000
 host = "127.0.0.1"
 
@@ -94,3 +94,17 @@ timezone = "Europe/London"
 [tools]
 allow = ["*"]
 deny = []
+
+# ── Auto-Update ─────────────────────────────────────────────────
+# Sigil can check its git repo for updates and apply them automatically.
+#
+# auto_update = true:  pulls changes + restarts automatically (hands-off)
+# auto_update = false: notifies you when updates are available (you trigger it)
+#
+# Either way, you can always ask the agent "check for updates" or "update yourself",
+# or use `sigil update` from the CLI.
+#
+[updater]
+auto_update = false
+branch = "main"
+check_interval_ms = 3600000   # 1 hour (in milliseconds)

@@ -132,6 +132,11 @@ export interface SigilConfig {
     allow: string[];
     deny: string[];
   };
+  updater: {
+    autoUpdate: boolean;
+    branch: string;
+    checkIntervalMs: number;
+  };
 }
 
 // Scheduler
