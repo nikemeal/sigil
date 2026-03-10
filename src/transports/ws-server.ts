@@ -35,7 +35,6 @@ export async function startWSServer(
   await app.register(fastifyWebsocket);
 
   const clients = new Set<WebSocket>();
-  const directReplies = new Set<string>(); // Track IDs we've already sent directly
 
   app.get('/ws', { websocket: true }, (socket) => {
     clients.add(socket);
@@ -55,9 +54,6 @@ export async function startWSServer(
           'web',
           msg.threadId ?? `ws_${Date.now()}`,
         );
-
-        // Mark this as already sent so the listener doesn't duplicate it
-        directReplies.add(response.id);
 
         const reply: WSResponse = {
           type: 'response',
@@ -79,13 +75,7 @@ export async function startWSServer(
   });
 
   // Listen for async notifications ONLY (task completions, health alerts, etc.)
-  // Skip anything we already sent as a direct reply
   gateway.onResponse('web', (response) => {
-    if (directReplies.has(response.id)) {
-      directReplies.delete(response.id);
-      return; // Already sent directly, don't duplicate
-    }
-
     const msg: WSResponse = { type: 'notify', content: response.content };
     const payload = JSON.stringify(msg);
     for (const client of clients) {

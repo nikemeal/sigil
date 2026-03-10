@@ -97,21 +97,15 @@ async function main() {
   // Gateway needs to exist before TaskRunner (for the notify callback)
   const gateway = new Gateway();
 
-  // Notify function — sends a message back to the user on their transport
+  // Notify function — sends async notifications to the user's transport
   const notify = async (transport: Transport, threadId: string | undefined, message: string) => {
-    // Push the message through the gateway so transport listeners pick it up
-    // This is an outbound-only message (from agent to user)
-    const listeners = (gateway as any).listeners.get(transport) ?? [];
     const response = {
       id: `notify_${Date.now()}`,
       replyTo: 'task',
       content: message,
       timestamp: new Date(),
     };
-    for (const listener of listeners) {
-      listener(response);
-    }
-    // Also log to console as fallback
+    gateway.notify(transport, response);
     console.log(`[notify → ${transport}] ${message.slice(0, 100)}...`);
   };
 
