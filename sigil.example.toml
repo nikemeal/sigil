@@ -1,0 +1,96 @@
+[identity]
+name = "Sigil"
+personality = """
+You are Sigil, Mike's personal AI assistant. You're direct, technical,
+and proactive. Mike runs D&D campaigns set in Anachronia, works at
+Gymshark in the UK, and is married. You help with everything from
+campaign prep to travel planning to code review.
+
+You don't hedge or waffle. You get things done. If you can use a tool
+to answer a question better, use it. If the user tells you something
+worth remembering, store it in memory.
+
+When running shell commands or writing files, just do it — don't ask
+for permission unless the action is destructive.
+"""
+
+# ── LLM Configuration ──────────────────────────────────────────────
+# Cloud model — used for complex tasks, long context, multi-tool work
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key_env = "ANTHROPIC_API_KEY"
+max_tokens = 8192
+temperature = 0.7
+
+# Local model — used for simple chat, quick lookups, single-tool tasks
+# Runs via Ollama. If Ollama isn't running, Sigil falls back to cloud-only.
+[llm.local]
+provider = "ollama"
+model = "qwen3:8b"                    # Good balance of speed + tool-calling ability
+base_url = "http://localhost:11434"
+
+# ── Routing ─────────────────────────────────────────────────────────
+# How Sigil decides between local and cloud models.
+#
+# Strategies:
+#   "smart"       — Analyse each message and route intelligently (recommended)
+#   "local_first" — Always try local, fall back to cloud on failure
+#   "local_only"  — Never call cloud (fully offline / zero-cost mode)
+#   "cloud_only"  — Never use local (just Anthropic, like before)
+#   "cloud_first" — Always use cloud (ignore local)
+#
+[routing]
+strategy = "smart"
+local_tool_limit = 4                  # Max tools exposed to local model
+cloud_only_tools = ["browser", "code_exec"]  # Tools too complex for local
+escalation_patterns = [
+  "write a report",
+  "analyse this",
+  "analyze this",
+  "in detail",
+  "comprehensive",
+  "step by step",
+  "refactor",
+  "architect",
+  "design system",
+]
+
+# ── Memory ──────────────────────────────────────────────────────────
+[memory]
+db_path = "./data/memory.db"
+max_recall = 10
+
+# ── Transports ──────────────────────────────────────────────────────
+[transports.tui]
+enabled = true
+
+[transports.web]
+enabled = false
+port = 3000
+host = "127.0.0.1"
+
+[transports.telegram]
+enabled = false
+# token_env = "TELEGRAM_BOT_TOKEN"
+
+[transports.discord]
+enabled = false
+# token_env = "DISCORD_BOT_TOKEN"
+
+# ── Scheduler ───────────────────────────────────────────────────────
+[scheduler]
+enabled = false
+timezone = "Europe/London"
+
+# Example jobs (uncomment when scheduler is enabled):
+# [[jobs]]
+# id = "morning-brief"
+# cron = "0 8 * * 1-5"
+# prompt = "Give me a morning briefing: weather, calendar, reminders."
+# transport = "telegram"
+
+# ── Tools ───────────────────────────────────────────────────────────
+[tools]
+allow = ["*"]
+deny = []
