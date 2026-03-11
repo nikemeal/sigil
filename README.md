@@ -24,8 +24,8 @@ You (TUI / Web / Telegram / Discord)
     └────┬────┘
          │
     ┌────▼────┐     ┌──────────────┐
-    │  Agent  │────▶│  Task System  │
-    └────┬────┘     │  (background) │
+    │  Agent  │────▶│ Task System  │
+    └────┬────┘     │ (background) │
          │          └──────┬───────┘
     ┌────▼────┐            │
     │  Smart  │      ┌─────▼──────┐
