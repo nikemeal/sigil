@@ -9,9 +9,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
  * The user visits https://github.com/login/device, enters a code, and we
  * poll until the token is granted.
  *
- * The OAuth token is then exchanged for a Copilot API session token via
- * https://api.github.com/copilot_internal/v2/token — this short-lived token
- * (~30 min) is what actually authenticates API calls. We auto-refresh it.
+ * The resulting OAuth token (gho_ prefix) is used directly as a Bearer token
+ * for Copilot API requests. No session token exchange is needed.
  *
  * Token persistence: OAuth tokens are saved to data/copilot-token.json
  * so you only need to auth once (until you revoke the token).
@@ -21,21 +20,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const CLIENT_ID = 'Ov23li8tweQw6odWQebz';
 const DEVICE_CODE_URL = 'https://github.com/login/device/code';
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
-const COPILOT_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
-const COPILOT_MODELS_URL = 'https://api.github.com/copilot_internal/v2/models';
+const COPILOT_CHAT_URL = 'https://api.githubcopilot.com';
 
 // Safety margin when polling to avoid clock skew
 const POLL_SAFETY_MS = 3000;
 
 export interface CopilotTokenData {
   oauthToken: string;
-  copilotToken?: string;
-  copilotTokenExpiresAt?: number; // unix timestamp in seconds
-}
-
-export interface CopilotSessionToken {
-  token: string;
-  expiresAt: number;
 }
 
 export interface CopilotModel {
@@ -55,7 +46,6 @@ export interface DeviceFlowResult {
 export class CopilotAuth {
   private tokenPath: string;
   private data: CopilotTokenData | null = null;
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private onTokenExpired?: () => void;
 
   constructor(dataDir: string, onTokenExpired?: () => void) {
@@ -81,13 +71,16 @@ export class CopilotAuth {
     writeFileSync(this.tokenPath, JSON.stringify(this.data, null, 2), { mode: 0o600 });
   }
 
-  /** Whether we have a saved OAuth token (not necessarily a valid session token). */
+  /** Whether we have a saved OAuth token. */
   get isAuthenticated(): boolean {
     return !!this.data?.oauthToken;
   }
 
-  /** Get the current OAuth token, or null if not authenticated. */
-  get oauthToken(): string | null {
+  /**
+   * Get the OAuth token for API requests.
+   * Returns null if not authenticated.
+   */
+  getToken(): string | null {
     return this.data?.oauthToken ?? null;
   }
 
@@ -189,114 +182,32 @@ export class CopilotAuth {
     }
   }
 
-  // ── Copilot Session Token ────────────────────────────────────
-
-  /**
-   * Get a valid Copilot API session token. Refreshes automatically if expired.
-   * Returns null if no OAuth token is available.
-   */
-  async getSessionToken(): Promise<CopilotSessionToken | null> {
-    if (!this.data?.oauthToken) return null;
-
-    // Check if current session token is still valid (with 60s buffer)
-    if (this.data.copilotToken && this.data.copilotTokenExpiresAt) {
-      const now = Math.floor(Date.now() / 1000);
-      if (this.data.copilotTokenExpiresAt > now + 60) {
-        return {
-          token: this.data.copilotToken,
-          expiresAt: this.data.copilotTokenExpiresAt,
-        };
-      }
-    }
-
-    // Refresh the session token
-    return this.refreshSessionToken();
-  }
-
-  private async refreshSessionToken(): Promise<CopilotSessionToken | null> {
-    if (!this.data?.oauthToken) return null;
-
-    try {
-      const res = await fetch(COPILOT_TOKEN_URL, {
-        headers: {
-          Authorization: `token ${this.data.oauthToken}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(10_000),
-      });
-
-      if (res.status === 401) {
-        console.error('[copilot] OAuth token is invalid or expired. Please re-authenticate.');
-        this.onTokenExpired?.();
-        return null;
-      }
-
-      if (!res.ok) {
-        const body = await res.text();
-        console.error(`[copilot] Failed to get session token: ${res.status} ${body}`);
-        return null;
-      }
-
-      const data = await res.json() as {
-        token: string;
-        expires_at: number;
-      };
-
-      this.data.copilotToken = data.token;
-      this.data.copilotTokenExpiresAt = data.expires_at;
-      this.save();
-
-      // Schedule proactive refresh 2 minutes before expiry
-      this.scheduleRefresh(data.expires_at);
-
-      return {
-        token: data.token,
-        expiresAt: data.expires_at,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[copilot] Session token refresh failed: ${msg}`);
-      return null;
-    }
-  }
-
-  private scheduleRefresh(expiresAt: number): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const refreshIn = Math.max((expiresAt - now - 120) * 1000, 10_000); // 2 min before expiry, min 10s
-
-    this.refreshTimer = setTimeout(async () => {
-      console.log('[copilot] Proactively refreshing session token...');
-      await this.refreshSessionToken();
-    }, refreshIn);
-
-    // Don't keep the process alive just for this timer
-    this.refreshTimer.unref();
-  }
-
   // ── Model Discovery ──────────────────────────────────────────
 
   /**
    * Fetch the list of models available to this Copilot subscription.
-   * Requires a valid session token.
+   * Uses the Copilot API models endpoint with the OAuth token directly.
    */
   async listModels(): Promise<CopilotModel[]> {
-    const session = await this.getSessionToken();
-    if (!session) {
+    const token = this.getToken();
+    if (!token) {
       throw new Error('Not authenticated. Run the Copilot login flow first.');
     }
 
-    const res = await fetch(COPILOT_MODELS_URL, {
+    const res = await fetch(`${COPILOT_CHAT_URL}/models`, {
       headers: {
-        Authorization: `Bearer ${session.token}`,
+        Authorization: `Bearer ${token}`,
         Accept: 'application/json',
         'Openai-Intent': 'conversation-edits',
       },
       signal: AbortSignal.timeout(10_000),
     });
+
+    if (res.status === 401) {
+      console.error('[copilot] OAuth token is invalid or revoked.');
+      this.onTokenExpired?.();
+      throw new Error('OAuth token is invalid. Please re-authenticate.');
+    }
 
     if (!res.ok) {
       throw new Error(`Failed to list Copilot models: ${res.status} ${await res.text()}`);
@@ -327,17 +238,49 @@ export class CopilotAuth {
     }));
   }
 
-  /** Clean up timers */
-  stop(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = null;
+  /**
+   * Verify the OAuth token is valid by making a lightweight API call.
+   * Returns { ok: true } if valid, or { ok: false, error } if not.
+   */
+  async verifyToken(): Promise<{ ok: boolean; error?: string }> {
+    const token = this.getToken();
+    if (!token) {
+      return { ok: false, error: 'No OAuth token stored' };
     }
+
+    try {
+      const res = await fetch(`${COPILOT_CHAT_URL}/models`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Openai-Intent': 'conversation-edits',
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (res.status === 401) {
+        this.onTokenExpired?.();
+        return { ok: false, error: 'OAuth token is invalid or revoked' };
+      }
+
+      if (!res.ok) {
+        return { ok: false, error: `Unexpected status ${res.status}` };
+      }
+
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  }
+
+  /** No-op for interface compatibility (no timers to clean up). */
+  stop(): void {
+    // OAuth tokens are long-lived; no refresh timers needed.
   }
 
   /** Remove stored credentials (logout) */
   logout(): void {
-    this.stop();
     this.data = null;
     if (existsSync(this.tokenPath)) {
       writeFileSync(this.tokenPath, '{}', { mode: 0o600 });

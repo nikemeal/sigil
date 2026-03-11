@@ -1,12 +1,12 @@
 import type { LLMProvider, CompletionRequest, CompletionResponse, ToolSchema } from '../../gateway/types.js';
-import type { CopilotAuth, CopilotSessionToken } from './copilot-auth.js';
+import type { CopilotAuth } from './copilot-auth.js';
 
 /**
  * GitHub Copilot provider — uses Copilot's OpenAI-compatible chat completions API.
  *
  * Copilot proxies multiple models (GPT-4o, Claude, Gemini, etc.) through a
- * single endpoint. Authentication is via a short-lived session token that
- * CopilotAuth manages (refreshed from the OAuth token automatically).
+ * single endpoint. Authentication is via the OAuth token directly — no
+ * session token exchange needed.
  *
  * The API endpoint is: https://api.githubcopilot.com/chat/completions
  * It's OpenAI-compatible, so we use the same format as the Ollama native tools path.
@@ -24,10 +24,10 @@ export class CopilotProvider implements LLMProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
-    const session = await this.auth.getSessionToken();
-    if (!session) {
+    const token = this.auth.getToken();
+    if (!token) {
       throw new Error(
-        'Copilot session expired or not authenticated. ' +
+        'Copilot not authenticated. ' +
         'Re-run onboarding or restart Sigil to re-authenticate.'
       );
     }
@@ -53,7 +53,7 @@ export class CopilotProvider implements LLMProvider {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.token}`,
+        Authorization: `Bearer ${token}`,
         'Openai-Intent': 'conversation-edits',
         'Editor-Version': 'sigil/0.1.0',
       },
@@ -61,10 +61,10 @@ export class CopilotProvider implements LLMProvider {
     });
 
     if (res.status === 401) {
-      // Token might have just expired — try one refresh
-      const refreshed = await this.retryWithRefresh(body);
-      if (refreshed) return refreshed;
-      throw new Error('Copilot session token expired and refresh failed.');
+      throw new Error(
+        'Copilot OAuth token is invalid or revoked. ' +
+        'Re-run onboarding to re-authenticate.'
+      );
     }
 
     if (!res.ok) {
@@ -72,26 +72,6 @@ export class CopilotProvider implements LLMProvider {
       throw new Error(`Copilot API error (${res.status}): ${err}`);
     }
 
-    return this.parseResponse(await res.json());
-  }
-
-  private async retryWithRefresh(body: Record<string, unknown>): Promise<CompletionResponse | null> {
-    // Force a new session token
-    const session = await this.auth.getSessionToken();
-    if (!session) return null;
-
-    const res = await fetch(COPILOT_CHAT_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.token}`,
-        'Openai-Intent': 'conversation-edits',
-        'Editor-Version': 'sigil/0.1.0',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) return null;
     return this.parseResponse(await res.json());
   }
 
@@ -135,25 +115,9 @@ export class CopilotProvider implements LLMProvider {
     };
   }
 
-  /** Health check — verify the session token is valid */
+  /** Health check — verify the OAuth token is still valid */
   async healthCheck(): Promise<{ ok: boolean; error?: string }> {
-    try {
-      const session = await this.auth.getSessionToken();
-      if (!session) {
-        return { ok: false, error: 'Not authenticated — no valid session token' };
-      }
-
-      // Check if token will expire soon (within 5 minutes)
-      const now = Math.floor(Date.now() / 1000);
-      if (session.expiresAt < now + 300) {
-        return { ok: false, error: `Session token expires in ${session.expiresAt - now}s` };
-      }
-
-      return { ok: true };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: msg };
-    }
+    return this.auth.verifyToken();
   }
 }
 

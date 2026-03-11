@@ -68,36 +68,13 @@ async function main() {
   if (copilotAuth) {
     health.register('copilot', async () => {
       const start = Date.now();
-      const session = await copilotAuth.getSessionToken();
+      const result = await copilotAuth.verifyToken();
       const latency = Date.now() - start;
-
-      if (!session) {
-        return {
-          component: 'copilot',
-          status: 'down' as const,
-          message: 'No valid session token',
-          latencyMs: latency,
-          lastChecked: new Date(),
-        };
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = session.expiresAt - now;
-
-      if (remaining < 300) {
-        return {
-          component: 'copilot',
-          status: 'degraded' as const,
-          message: `Session token expires in ${remaining}s`,
-          latencyMs: latency,
-          lastChecked: new Date(),
-        };
-      }
 
       return {
         component: 'copilot',
-        status: 'healthy' as const,
-        message: `Authenticated (${latency}ms, token expires in ${Math.floor(remaining / 60)}min)`,
+        status: result.ok ? 'healthy' as const : 'down' as const,
+        message: result.ok ? `Authenticated (${latency}ms)` : result.error!,
         latencyMs: latency,
         lastChecked: new Date(),
       };
@@ -279,14 +256,6 @@ async function buildLLM(
     if (!copilotAuth.isAuthenticated) {
       console.error('[sigil] Copilot provider selected but not authenticated.');
       console.error('[sigil] Run the onboarding wizard to sign in: npx tsx src/onboard.ts');
-      process.exit(1);
-    }
-
-    // Verify session token works
-    const session = await copilotAuth.getSessionToken();
-    if (!session) {
-      console.error('[sigil] Copilot: failed to obtain session token. OAuth token may be invalid.');
-      console.error('[sigil] Run the onboarding wizard to re-authenticate.');
       process.exit(1);
     }
 
