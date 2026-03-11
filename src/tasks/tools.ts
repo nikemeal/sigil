@@ -96,7 +96,7 @@ Steps are optional — if omitted, the task planner will break the objective int
       name: 'schedule_self',
       description: `Schedule yourself to do something later. Use this when:
 - You want to check back on something ("I'll check the weather tomorrow morning")
-- You need to follow up ("I'll remind Mike about X on Friday")
+- You need to follow up ("I'll remind you about X on Friday")
 - You want to run a recurring check ("Monitor Y every day at 9am")
 
 This creates a task that will trigger at the specified time.`,
