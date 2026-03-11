@@ -4,6 +4,7 @@ import * as readline from 'node:readline';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import TOML from '@iarna/toml';
+import { CopilotAuth } from './agent/providers/copilot-auth.js';
 
 /**
  * Interactive onboarding wizard.
@@ -103,8 +104,10 @@ function backupConfig(configPath: string): string {
 type ConfigState = {
   agentName: string;
   personality: string;
+  cloudProvider: string;     // 'anthropic' | 'copilot'
   modelString: string;
   hasApiKey: boolean;
+  copilotModel: string;      // model selected from Copilot's model list
   useLocal: boolean;
   localModel: string;
   ollamaUrl: string;
@@ -125,8 +128,10 @@ function stateFromExisting(existing: ExistingConfig): ConfigState {
   return {
     agentName: existing.identity?.name ?? 'Sigil',
     personality: existing.identity?.personality ?? '',
+    cloudProvider: existing.llm?.provider ?? 'anthropic',
     modelString: existing.llm?.model ?? 'claude-sonnet-4-20250514',
     hasApiKey: true,
+    copilotModel: (existing.llm as any)?.copilot?.model ?? '',
     useLocal: !!existing.llm?.local?.model,
     localModel: existing.llm?.local?.model ?? '',
     ollamaUrl: existing.llm?.local?.base_url ?? 'http://localhost:11434',
@@ -170,6 +175,87 @@ async function wizardIdentity(state: ConfigState): Promise<void> {
 async function wizardLLM(state: ConfigState): Promise<void> {
   console.log('\n  ── LLM Setup ──\n');
 
+  const providerChoice = await choose('Cloud LLM provider?', [
+    'Anthropic — Claude models (requires API key)',
+    'GitHub Copilot — use your Copilot subscription (OAuth login)',
+  ]);
+
+  if (providerChoice.includes('Copilot')) {
+    state.cloudProvider = 'copilot';
+    state.hasApiKey = true; // Copilot uses OAuth, not API keys
+
+    // Run the GitHub device flow
+    console.log('\n  Authenticating with GitHub Copilot...\n');
+
+    const dataDir = resolve('data');
+    mkdirSync(dataDir, { recursive: true });
+    const copilotAuth = new CopilotAuth(dataDir);
+
+    if (copilotAuth.isAuthenticated) {
+      const reuse = await ask('  Existing Copilot login found. Use it? (y/n)', 'y');
+      if (reuse.toLowerCase() !== 'y') {
+        copilotAuth.logout();
+      }
+    }
+
+    if (!copilotAuth.isAuthenticated) {
+      try {
+        const flow = await copilotAuth.startDeviceFlow();
+
+        console.log(`  1. Open: ${flow.verificationUri}`);
+        console.log(`  2. Enter code: ${flow.userCode}`);
+        console.log('  3. Waiting for authorization...\n');
+
+        await flow.waitForAuth();
+        console.log('  ✓ GitHub authentication successful!\n');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`  ✗ Authentication failed: ${msg}`);
+        console.log('  Falling back to Anthropic provider.\n');
+        state.cloudProvider = 'anthropic';
+        copilotAuth.stop();
+        await wizardLLMAnthropicModel(state);
+        return await wizardLLMLocal(state);
+      }
+    }
+
+    // Fetch available models
+    try {
+      console.log('  Fetching available models...\n');
+      const models = await copilotAuth.listModels();
+      copilotAuth.stop();
+
+      if (models.length === 0) {
+        console.log('  No models returned from Copilot API.');
+        console.log('  Your subscription may not include chat models, or the API may be unavailable.');
+        console.log('  Falling back to Anthropic provider.\n');
+        state.cloudProvider = 'anthropic';
+        await wizardLLMAnthropicModel(state);
+        return await wizardLLMLocal(state);
+      }
+
+      const modelOptions = models.map(m => `${m.id} (${m.version})`);
+      const selectedModel = await choose('Select a Copilot model:', modelOptions);
+      state.copilotModel = selectedModel.split(' ')[0];
+      state.modelString = state.copilotModel;
+      console.log(`\n  Using: ${state.copilotModel}\n`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  ✗ Failed to fetch models: ${msg}`);
+      console.log('  You can set the model manually in sigil.toml.\n');
+      state.copilotModel = await ask('  Enter a model ID manually (e.g. gpt-4o, claude-sonnet-4-20250514)', 'gpt-4o');
+      state.modelString = state.copilotModel;
+      copilotAuth.stop();
+    }
+  } else {
+    state.cloudProvider = 'anthropic';
+    await wizardLLMAnthropicModel(state);
+  }
+
+  await wizardLLMLocal(state);
+}
+
+async function wizardLLMAnthropicModel(state: ConfigState): Promise<void> {
   const currentModel = state.modelString.includes('opus') ? 'opus' : 'sonnet';
   const cloudModel = await choose(`Cloud LLM (for complex tasks)? [current: ${currentModel}]`, [
     'claude-sonnet-4-20250514 (recommended — fast + capable)',
@@ -179,7 +265,9 @@ async function wizardLLM(state: ConfigState): Promise<void> {
 
   const hasKey = await ask('Do you have an ANTHROPIC_API_KEY set? (y/n)', 'y');
   state.hasApiKey = hasKey.toLowerCase() === 'y';
+}
 
+async function wizardLLMLocal(state: ConfigState): Promise<void> {
   const currentLocal = state.useLocal ? 'y' : 'n';
   const useLocal = await ask('Set up a local LLM via Ollama? (y/n)', currentLocal);
   state.useLocal = useLocal.toLowerCase() === 'y';
@@ -288,7 +376,36 @@ function generateConfig(state: ConfigState): string {
 
   fullPersonality += `\n\nWhen you receive a complex request, consider whether it needs background work. If so, create a task, tell the user you'll work on it, and message them back when done. Don't make the user wait for things that take time — work autonomously.`;
 
-  let config = `[identity]
+  let config: string;
+
+  if (state.cloudProvider === 'copilot') {
+    config = `[identity]
+name = "${state.agentName}"
+personality = """
+${fullPersonality}
+"""
+
+# ── LLM Configuration ──────────────────────────────────────────────
+# Cloud model — via GitHub Copilot (OAuth-authenticated)
+[llm]
+provider = "copilot"
+model = "${state.copilotModel}"
+api_key_env = ""
+max_tokens = 8192
+temperature = 0.7
+
+[llm.copilot]
+model = "${state.copilotModel}"
+
+# Local model — used for simple chat, quick lookups, single-tool tasks
+# Runs via Ollama. If Ollama isn't running, Sigil falls back to cloud-only.
+[llm.local]
+provider = "ollama"
+model = "${state.localModel}"
+base_url = "${state.ollamaUrl || 'http://localhost:11434'}"
+`;
+  } else {
+    config = `[identity]
 name = "${state.agentName}"
 personality = """
 ${fullPersonality}
@@ -309,7 +426,10 @@ temperature = 0.7
 provider = "ollama"
 model = "${state.localModel}"
 base_url = "${state.ollamaUrl || 'http://localhost:11434'}"
+`;
+  }
 
+  config += `
 # ── Routing ─────────────────────────────────────────────────────────
 [routing]
 strategy = "${state.strategy}"
@@ -386,7 +506,7 @@ check_interval_ms = 3600000   # 1 hour (in milliseconds)
 
 const SECTIONS = {
   identity: 'Identity — agent name & personality',
-  llm: 'LLM — cloud model, local model, routing',
+  llm: 'LLM — cloud provider (Anthropic/Copilot), local model, routing',
   transports: 'Transports — TUI, web, Telegram, Discord',
   personal: 'About You — name, location, timezone, interests',
 } as const;
@@ -417,8 +537,10 @@ async function main() {
     if (mode.includes('fresh')) {
       // Full setup — same as first run
       state = {
-        agentName: 'Sigil', personality: '', modelString: 'claude-sonnet-4-20250514',
-        hasApiKey: true, useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
+        agentName: 'Sigil', personality: '', cloudProvider: 'anthropic',
+        modelString: 'claude-sonnet-4-20250514',
+        hasApiKey: true, copilotModel: '',
+        useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
         strategy: 'smart', enableWeb: false, enableTelegram: false, enableDiscord: false,
         webPort: 3000, timezone: 'Europe/London', contextParts: [], userName: '',
       };
@@ -439,8 +561,10 @@ async function main() {
   } else {
     // ── First run — full setup ──
     state = {
-      agentName: 'Sigil', personality: '', modelString: 'claude-sonnet-4-20250514',
-      hasApiKey: true, useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
+      agentName: 'Sigil', personality: '', cloudProvider: 'anthropic',
+      modelString: 'claude-sonnet-4-20250514',
+      hasApiKey: true, copilotModel: '',
+      useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
       strategy: 'smart', enableWeb: false, enableTelegram: false, enableDiscord: false,
       webPort: 3000, timezone: 'Europe/London', contextParts: [], userName: '',
     };
@@ -494,9 +618,14 @@ ${state.contextParts.join('\n')}
   console.log('\n  ══════════════════════════════════════');
   console.log(`  ${state.agentName} — ${updatedLabel}\n`);
 
-  if (!state.hasApiKey) {
+  if (!state.hasApiKey && state.cloudProvider !== 'copilot') {
     console.log('  Set your API key:');
     console.log('     sigil env\n');
+  }
+
+  if (state.cloudProvider === 'copilot') {
+    console.log(`  Cloud LLM: ${state.copilotModel} via GitHub Copilot`);
+    console.log('  (OAuth token saved in data/copilot-token.json)\n');
   }
 
   if (state.useLocal && state.localModel) {

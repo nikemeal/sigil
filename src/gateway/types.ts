@@ -97,7 +97,7 @@ export interface SigilConfig {
     personality: string;
   };
   llm: {
-    provider: string;
+    provider: string;   // 'anthropic' | 'copilot'
     model: string;
     apiKeyEnv: string;
     maxTokens: number;
@@ -106,6 +106,9 @@ export interface SigilConfig {
       provider: string;
       model: string;
       baseUrl?: string;
+    };
+    copilot?: {
+      model: string;    // e.g. 'gpt-4o', 'claude-sonnet-4-20250514', 'gemini-2.0-flash'
     };
   };
   routing: {

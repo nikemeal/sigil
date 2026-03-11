@@ -3,6 +3,8 @@ import { Gateway } from './gateway/gateway.js';
 import { Agent } from './agent/agent.js';
 import { AnthropicProvider } from './agent/providers/anthropic.js';
 import { OllamaProvider } from './agent/providers/ollama.js';
+import { CopilotProvider } from './agent/providers/copilot.js';
+import { CopilotAuth } from './agent/providers/copilot-auth.js';
 import { createRouter } from './agent/providers/router.js';
 import { ContextEngine } from './context/engine.js';
 import { ToolRegistry } from './tools/registry.js';
@@ -56,7 +58,51 @@ async function main() {
     }
   });
 
-  const llm = await buildLLM(config, health);
+  const { provider: llm, copilotAuth } = await buildLLM(config, health, () => {
+    // Late-bound: called when the Copilot OAuth token becomes invalid
+    notifyFn?.('telegram', undefined,
+      '⚠ GitHub Copilot OAuth token expired. Please re-authenticate (run onboarding wizard).');
+  });
+
+  // Register Copilot health check if active
+  if (copilotAuth) {
+    health.register('copilot', async () => {
+      const start = Date.now();
+      const session = await copilotAuth.getSessionToken();
+      const latency = Date.now() - start;
+
+      if (!session) {
+        return {
+          component: 'copilot',
+          status: 'down' as const,
+          message: 'No valid session token',
+          latencyMs: latency,
+          lastChecked: new Date(),
+        };
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = session.expiresAt - now;
+
+      if (remaining < 300) {
+        return {
+          component: 'copilot',
+          status: 'degraded' as const,
+          message: `Session token expires in ${remaining}s`,
+          latencyMs: latency,
+          lastChecked: new Date(),
+        };
+      }
+
+      return {
+        component: 'copilot',
+        status: 'healthy' as const,
+        message: `Authenticated (${latency}ms, token expires in ${Math.floor(remaining / 60)}min)`,
+        latencyMs: latency,
+        lastChecked: new Date(),
+      };
+    });
+  }
 
   // 4. Set up skills (hot-reloadable)
   const skills = new SkillLoader('./skills');
@@ -196,6 +242,7 @@ async function main() {
     console.log('\n[sigil] Shutting down...');
     updater.stop();
     health.stop();
+    copilotAuth?.stop();
     telegram?.stop();
     skills.stop();
     context.close();
@@ -207,11 +254,82 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
+interface BuildLLMResult {
+  provider: LLMProvider;
+  copilotAuth?: CopilotAuth;
+}
+
 async function buildLLM(
   config: ReturnType<typeof loadConfig>,
   health?: HealthMonitor,
-): Promise<LLMProvider> {
+  onCopilotTokenExpired?: () => void,
+): Promise<BuildLLMResult> {
   const strategy = config.routing.strategy;
+
+  // ── Copilot provider ───────────────────────────────────────────
+  if (config.llm.provider === 'copilot') {
+    const copilotModel = config.llm.copilot?.model;
+    if (!copilotModel) {
+      console.error('[sigil] Copilot provider selected but no model configured (llm.copilot.model).');
+      process.exit(1);
+    }
+
+    const copilotAuth = new CopilotAuth('./data', onCopilotTokenExpired);
+
+    if (!copilotAuth.isAuthenticated) {
+      console.error('[sigil] Copilot provider selected but not authenticated.');
+      console.error('[sigil] Run the onboarding wizard to sign in: npx tsx src/onboard.ts');
+      process.exit(1);
+    }
+
+    // Verify session token works
+    const session = await copilotAuth.getSessionToken();
+    if (!session) {
+      console.error('[sigil] Copilot: failed to obtain session token. OAuth token may be invalid.');
+      console.error('[sigil] Run the onboarding wizard to re-authenticate.');
+      process.exit(1);
+    }
+
+    const copilotProvider = new CopilotProvider(copilotAuth, copilotModel);
+    console.log(`[sigil] Cloud LLM: ${copilotModel} via GitHub Copilot ✓`);
+
+    // Copilot can also be paired with a local Ollama model
+    let localProvider: OllamaProvider | null = null;
+    let hasLocal = false;
+
+    if (config.llm.local) {
+      const ollama = new OllamaProvider(
+        config.llm.local.model,
+        config.llm.local.baseUrl ?? 'http://localhost:11434'
+      );
+      const check = await ollama.healthCheck();
+      if (check.ok) {
+        localProvider = ollama;
+        hasLocal = true;
+        console.log(`[sigil] Local LLM: ${config.llm.local.model} via Ollama ✓`);
+        health?.register('ollama', ollamaCheck(ollama));
+      } else {
+        console.warn(`[sigil] Local LLM unavailable: ${check.error}`);
+      }
+    }
+
+    if (hasLocal) {
+      console.log(`[sigil] Routing strategy: ${strategy}`);
+      return {
+        provider: createRouter(localProvider!, copilotProvider, {
+          strategy,
+          localToolLimit: config.routing.localToolLimit,
+          cloudOnlyTools: config.routing.cloudOnlyTools,
+          cloudEscalationPatterns: config.routing.escalationPatterns,
+        }),
+        copilotAuth,
+      };
+    }
+
+    return { provider: copilotProvider, copilotAuth };
+  }
+
+  // ── Anthropic + Ollama (existing logic) ────────────────────────
   const cloudApiKey = process.env[config.llm.apiKeyEnv];
   const hasCloud = !!cloudApiKey;
 
@@ -243,22 +361,24 @@ async function buildLLM(
     const cloud = new AnthropicProvider(config.llm.model, cloudApiKey);
     console.log(`[sigil] Cloud LLM: ${config.llm.model} via Anthropic ✓`);
     console.log(`[sigil] Routing strategy: ${strategy}`);
-    return createRouter(localProvider!, cloud, {
-      strategy,
-      localToolLimit: config.routing.localToolLimit,
-      cloudOnlyTools: config.routing.cloudOnlyTools,
-      cloudEscalationPatterns: config.routing.escalationPatterns,
-    });
+    return {
+      provider: createRouter(localProvider!, cloud, {
+        strategy,
+        localToolLimit: config.routing.localToolLimit,
+        cloudOnlyTools: config.routing.cloudOnlyTools,
+        cloudEscalationPatterns: config.routing.escalationPatterns,
+      }),
+    };
   }
 
   if (hasLocal) {
     console.log(`[sigil] Running in local-only mode (no API key set)`);
-    return localProvider!;
+    return { provider: localProvider! };
   }
 
   if (hasCloud) {
     console.log(`[sigil] Running in cloud-only mode (no local LLM)`);
-    return new AnthropicProvider(config.llm.model, cloudApiKey);
+    return { provider: new AnthropicProvider(config.llm.model, cloudApiKey) };
   }
 
   console.error('[sigil] No LLM available. Set ANTHROPIC_API_KEY or start Ollama.');

@@ -19,6 +19,9 @@ const DEFAULT_CONFIG: SigilConfig = {
       model: 'qwen3:8b',
       baseUrl: 'http://localhost:11434',
     },
+    copilot: {
+      model: '',
+    },
   },
   routing: {
     strategy: 'smart',

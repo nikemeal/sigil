@@ -16,6 +16,13 @@ api_key_env = "ANTHROPIC_API_KEY"
 max_tokens = 8192
 temperature = 0.7
 
+# GitHub Copilot — use your Copilot subscription instead of an API key.
+# Set provider = "copilot" above, then configure the model below.
+# Run the onboarding wizard to authenticate via GitHub device flow.
+#
+# [llm.copilot]
+# model = "gpt-4o"          # or "claude-sonnet-4-20250514", "gemini-2.0-flash", etc.
+
 # Local model — used for simple chat, quick lookups, single-tool tasks
 # Runs via Ollama. If Ollama isn't running, Sigil falls back to cloud-only.
 [llm.local]
