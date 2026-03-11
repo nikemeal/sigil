@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, existsSync, watch } from 'node:fs';
-import { resolve, join, extname } from 'node:path';
+import { readFileSync, readdirSync, existsSync, statSync, watch } from 'node:fs';
+import { resolve, join, extname, relative } from 'node:path';
 import type { Tool, ToolResult } from '../gateway/types.js';
 
 interface Skill {
@@ -61,21 +61,36 @@ export class SkillLoader {
     }));
   }
 
-  /** Load all skills from disk */
+  /** Recursively collect all files from a directory */
+  private collectFiles(dir: string): string[] {
+    const results: string[] = [];
+    if (!existsSync(dir)) return results;
+
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith('.') || entry.startsWith('_')) continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        results.push(...this.collectFiles(full));
+      } else {
+        results.push(full);
+      }
+    }
+    return results;
+  }
+
+  /** Load all skills from disk (recursively) */
   private loadAll(): void {
     if (!existsSync(this.skillsDir)) {
       console.log(`[skills] No skills directory at ${this.skillsDir}`);
       return;
     }
 
-    const files = readdirSync(this.skillsDir);
+    const files = this.collectFiles(this.skillsDir);
     let loaded = 0;
 
-    for (const file of files) {
-      if (file.startsWith('.') || file.startsWith('_')) continue;
-
-      if (file.endsWith('.md')) {
-        this.loadMarkdownSkill(file);
+    for (const filePath of files) {
+      if (filePath.endsWith('.md')) {
+        this.loadMarkdownSkill(filePath);
         loaded++;
       }
       // TODO: .tool.ts / .tool.js for executable tool skills
@@ -87,10 +102,10 @@ export class SkillLoader {
   }
 
   /** Load a markdown knowledge skill */
-  private loadMarkdownSkill(filename: string): void {
-    const filePath = join(this.skillsDir, filename);
+  private loadMarkdownSkill(filePath: string): void {
     const content = readFileSync(filePath, 'utf-8');
-    const name = filename.replace('.md', '');
+    // Use path relative to skills dir as the name (e.g. "examples/travel-planning")
+    const name = relative(this.skillsDir, filePath).replace(/\.md$/, '');
 
     // Extract description from first paragraph or heading
     const firstLine = content.split('\n').find(l => l.trim() && !l.startsWith('#')) ?? '';
@@ -105,12 +120,12 @@ export class SkillLoader {
     });
   }
 
-  /** Watch the skills directory for changes */
+  /** Watch the skills directory for changes (recursive) */
   private watchForChanges(): void {
     if (!existsSync(this.skillsDir)) return;
 
     try {
-      this.watcher = watch(this.skillsDir, { persistent: false }, (eventType, filename) => {
+      this.watcher = watch(this.skillsDir, { persistent: false, recursive: true }, (eventType, filename) => {
         if (!filename) return;
 
         const filePath = join(this.skillsDir, filename);
@@ -118,9 +133,9 @@ export class SkillLoader {
         if (filename.endsWith('.md')) {
           if (existsSync(filePath)) {
             console.log(`[skills] Reloading skill: ${filename}`);
-            this.loadMarkdownSkill(filename);
+            this.loadMarkdownSkill(filePath);
           } else {
-            const name = filename.replace('.md', '');
+            const name = filename.replace(/\.md$/, '');
             this.skills.delete(name);
             console.log(`[skills] Removed skill: ${name}`);
           }

@@ -59,44 +59,33 @@ You need at least one of Ollama or an API key. If both are available, Sigil rout
 
 ## Quick start
 
+Sigil is designed to run 24/7 on a small Linux box — an LXC container, a Raspberry Pi, a cheap VPS. A provisioning script handles everything for Ubuntu:
+
 ```bash
+# On a fresh Ubuntu 24.04 machine
 git clone https://github.com/youruser/sigil.git
 cd sigil
-npm install
+sudo ./provision.sh
+```
 
-# Run the interactive setup wizard
-npm run onboard
+This installs Node.js, creates a dedicated system user, builds Sigil, sets up a systemd service with auto-restart, and configures log rotation.
 
-# Start Sigil
-npm run dev
+Once provisioned, everything is managed through the `sigil` CLI:
+
+```bash
+# 1. Add your API keys
+sigil env
+
+# 2. Run the interactive setup wizard
+sigil onboard
+
+# 3. Start Sigil
+sigil start
 ```
 
 The onboarding wizard walks you through naming your agent, choosing LLM providers, setting up transports (Telegram, Discord, etc.), and configuring personal context.
 
-### Manual setup
-
-If you'd prefer to configure things by hand:
-
-```bash
-cp sigil.example.toml sigil.toml
-# Edit sigil.toml with your preferences
-
-export ANTHROPIC_API_KEY="sk-ant-..."  # if using cloud
-ollama pull qwen3:8b                    # if using local
-
-npm run dev
-```
-
-## Deploying on a server
-
-Sigil is designed to run 24/7 on a small Linux box — an LXC container, a Raspberry Pi, a cheap VPS. A provisioning script is included for Ubuntu:
-
-```bash
-# On a fresh Ubuntu 24.04 machine
-sudo ./provision.sh
-```
-
-This installs Node.js, creates a dedicated system user, sets up a systemd service with auto-restart, configures log rotation, and creates a `sigil` CLI wrapper for easy management:
+### All `sigil` commands
 
 ```bash
 sigil start        # start the service
@@ -104,11 +93,31 @@ sigil stop         # stop the service
 sigil restart      # restart after config changes
 sigil status       # check if running
 sigil logs         # follow live logs
+sigil logs-recent  # show last hour of logs
 sigil config       # edit sigil.toml
 sigil env          # edit API keys
 sigil onboard      # re-run setup wizard
 sigil update       # pull latest code + restart
+sigil tui          # open terminal chat
+sigil health       # run health checks
 sigil tasks        # list background tasks
+sigil db [sql]     # query the SQLite database
+```
+
+### Local development
+
+If you want to run Sigil locally for development instead of as a service:
+
+```bash
+git clone https://github.com/youruser/sigil.git
+cd sigil
+npm install
+cp sigil.example.toml sigil.toml
+
+# Edit sigil.toml with your preferences
+# Add API keys to .env
+
+npm run dev
 ```
 
 ### Connecting to Ollama on another machine

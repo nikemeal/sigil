@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 
 import * as readline from 'node:readline';
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import TOML from '@iarna/toml';
 
 /**
  * Interactive onboarding wizard.
- * Run with: npx tsx src/onboard.ts
+ * Run with: sigil onboard (or npx tsx src/onboard.ts)
  *
- * Walks through:
+ * First run — walks through full setup:
  * 1. Agent name & personality
  * 2. LLM setup (cloud + local)
  * 3. Transport selection + setup
- * 4. Personal context (so the agent knows you)
+ * 4. Personal context
  * 5. Writes sigil.toml + initial skill files
+ *
+ * Re-run — detects existing config and lets you update specific sections.
  */
 
 const rl = readline.createInterface({
@@ -53,15 +56,96 @@ function multiChoice(question: string, options: string[]): Promise<string[]> {
   });
 }
 
-async function main() {
-  console.log('\n  ╔══════════════════════════════════════╗');
-  console.log('  ║      Sigil — Onboarding Wizard      ║');
-  console.log('  ╚══════════════════════════════════════╝\n');
+// ── Existing config helpers ──────────────────────────────────────
 
-  // ── 1. Identity ──────────────────────────────────────────────
-  console.log('  ── Identity ──\n');
+interface ExistingConfig {
+  identity?: { name?: string; personality?: string };
+  llm?: {
+    provider?: string; model?: string; api_key_env?: string;
+    max_tokens?: number; temperature?: number;
+    local?: { provider?: string; model?: string; base_url?: string };
+  };
+  routing?: {
+    strategy?: string; local_tool_limit?: number;
+    cloud_only_tools?: string[]; escalation_patterns?: string[];
+  };
+  memory?: { db_path?: string; max_recall?: number };
+  transports?: {
+    tui?: { enabled?: boolean };
+    web?: { enabled?: boolean; port?: number; host?: string };
+    telegram?: { enabled?: boolean; token_env?: string };
+    discord?: { enabled?: boolean; token_env?: string };
+  };
+  scheduler?: { enabled?: boolean; timezone?: string };
+  tools?: { allow?: string[]; deny?: string[] };
+  updater?: { auto_update?: boolean; branch?: string; check_interval_ms?: number };
+}
 
-  const agentName = await ask('What should your agent be called?', 'Sigil');
+function loadExisting(configPath: string): ExistingConfig | null {
+  if (!existsSync(configPath)) return null;
+  try {
+    const raw = readFileSync(configPath, 'utf-8');
+    return TOML.parse(raw) as unknown as ExistingConfig;
+  } catch {
+    return null;
+  }
+}
+
+function backupConfig(configPath: string): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const backupPath = `${configPath}.backup-${ts}`;
+  copyFileSync(configPath, backupPath);
+  return backupPath;
+}
+
+// ── Section wizards ──────────────────────────────────────────────
+
+type ConfigState = {
+  agentName: string;
+  personality: string;
+  modelString: string;
+  hasApiKey: boolean;
+  useLocal: boolean;
+  localModel: string;
+  ollamaUrl: string;
+  strategy: string;
+  enableWeb: boolean;
+  enableTelegram: boolean;
+  enableDiscord: boolean;
+  webPort: number;
+  timezone: string;
+  contextParts: string[];
+  userName: string;
+  // Preserved fields from existing config
+  updater?: ExistingConfig['updater'];
+};
+
+function stateFromExisting(existing: ExistingConfig): ConfigState {
+  const t = existing.transports ?? {};
+  return {
+    agentName: existing.identity?.name ?? 'Sigil',
+    personality: existing.identity?.personality ?? '',
+    modelString: existing.llm?.model ?? 'claude-sonnet-4-20250514',
+    hasApiKey: true,
+    useLocal: !!existing.llm?.local?.model,
+    localModel: existing.llm?.local?.model ?? '',
+    ollamaUrl: existing.llm?.local?.base_url ?? 'http://localhost:11434',
+    strategy: existing.routing?.strategy ?? 'smart',
+    enableWeb: t.web?.enabled ?? false,
+    enableTelegram: t.telegram?.enabled ?? false,
+    enableDiscord: t.discord?.enabled ?? false,
+    webPort: t.web?.port ?? 3000,
+    timezone: existing.scheduler?.timezone ?? 'Europe/London',
+    contextParts: [],
+    userName: '',
+    updater: existing.updater,
+  };
+}
+
+async function wizardIdentity(state: ConfigState): Promise<void> {
+  console.log('\n  ── Identity ──\n');
+
+  state.agentName = await ask('What should your agent be called?', state.agentName);
 
   const personalityStyle = await choose('What personality style?', [
     'Direct & technical — gets things done, minimal chat',
@@ -70,37 +154,39 @@ async function main() {
     'Custom — I\'ll write it myself',
   ]);
 
-  let personality: string;
   if (personalityStyle.includes('Custom')) {
-    personality = await ask('Write your agent personality (one paragraph)');
+    state.personality = await ask('Write your agent personality (one paragraph)', state.personality);
   } else {
     const styleMap: Record<string, string> = {
-      'Direct & technical': `You are ${agentName}, a personal AI assistant. Be direct, technical, and action-oriented. Don't hedge or waffle. If you can do something with tools, just do it. Report back concisely.`,
-      'Friendly & proactive': `You are ${agentName}, a personal AI assistant. Be warm and approachable but efficient. Anticipate needs, suggest helpful actions, and keep things conversational without being verbose.`,
-      'Formal & thorough': `You are ${agentName}, a personal AI assistant. Be professional and thorough. Provide detailed explanations when asked, cite sources, and structure responses clearly.`,
+      'Direct & technical': `You are ${state.agentName}, a personal AI assistant. Be direct, technical, and action-oriented. Don't hedge or waffle. If you can do something with tools, just do it. Report back concisely.`,
+      'Friendly & proactive': `You are ${state.agentName}, a personal AI assistant. Be warm and approachable but efficient. Anticipate needs, suggest helpful actions, and keep things conversational without being verbose.`,
+      'Formal & thorough': `You are ${state.agentName}, a personal AI assistant. Be professional and thorough. Provide detailed explanations when asked, cite sources, and structure responses clearly.`,
     };
     const key = Object.keys(styleMap).find(k => personalityStyle.includes(k)) ?? 'Direct & technical';
-    personality = styleMap[key];
+    state.personality = styleMap[key];
   }
+}
 
-  // ── 2. LLM Setup ────────────────────────────────────────────
+async function wizardLLM(state: ConfigState): Promise<void> {
   console.log('\n  ── LLM Setup ──\n');
 
-  const cloudModel = await choose('Cloud LLM (for complex tasks)?', [
+  const currentModel = state.modelString.includes('opus') ? 'opus' : 'sonnet';
+  const cloudModel = await choose(`Cloud LLM (for complex tasks)? [current: ${currentModel}]`, [
     'claude-sonnet-4-20250514 (recommended — fast + capable)',
     'claude-opus-4-6 (most powerful, slower, pricier)',
   ]);
-  const modelString = cloudModel.includes('opus') ? 'claude-opus-4-6' : 'claude-sonnet-4-20250514';
+  state.modelString = cloudModel.includes('opus') ? 'claude-opus-4-6' : 'claude-sonnet-4-20250514';
 
-  const hasApiKey = await ask('Do you have an ANTHROPIC_API_KEY set? (y/n)', 'y');
+  const hasKey = await ask('Do you have an ANTHROPIC_API_KEY set? (y/n)', 'y');
+  state.hasApiKey = hasKey.toLowerCase() === 'y';
 
-  const useLocal = await ask('Set up a local LLM via Ollama? (y/n)', 'y');
-  let localModel = '';
-  let ollamaUrl = '';
+  const currentLocal = state.useLocal ? 'y' : 'n';
+  const useLocal = await ask('Set up a local LLM via Ollama? (y/n)', currentLocal);
+  state.useLocal = useLocal.toLowerCase() === 'y';
 
-  if (useLocal.toLowerCase() === 'y') {
-    ollamaUrl = await ask('Ollama URL', 'http://localhost:11434');
-    localModel = await choose('Local model?', [
+  if (state.useLocal) {
+    state.ollamaUrl = await ask('Ollama URL', state.ollamaUrl);
+    const localModel = await choose('Local model?', [
       'qwen3:8b (best all-rounder for 8GB)',
       'qwen3:14b (near GPT-4, needs 16GB)',
       'llama3.3:8b (strong general + coding)',
@@ -109,24 +195,35 @@ async function main() {
     ]);
 
     if (localModel.includes('Custom')) {
-      localModel = await ask('Model name (as used with ollama pull)');
+      state.localModel = await ask('Model name (as used with ollama pull)', state.localModel);
     } else {
-      localModel = localModel.split(' ')[0]; // Extract model name before description
+      state.localModel = localModel.split(' ')[0];
     }
 
-    console.log(`\n  Make sure to run: ollama pull ${localModel}`);
+    console.log(`\n  Make sure to run: ollama pull ${state.localModel}`);
+  } else {
+    state.localModel = '';
+    state.ollamaUrl = '';
   }
 
-  const routingStrategy = await choose('How should requests be routed?', [
+  const strategyOptions = [
     'smart — auto-decide per request (recommended)',
     'local_first — prefer local, fall back to cloud',
     'local_only — fully offline, no cloud calls',
     'cloud_only — always use cloud',
-  ]);
-  const strategy = routingStrategy.split(' ')[0];
+  ];
+  const routingStrategy = await choose(`Routing strategy? [current: ${state.strategy}]`, strategyOptions);
+  state.strategy = routingStrategy.split(' ')[0];
+}
 
-  // ── 3. Transports ───────────────────────────────────────────
+async function wizardTransports(state: ConfigState): Promise<void> {
   console.log('\n  ── Transports ──\n');
+
+  const current: string[] = ['Terminal (TUI) — always on'];
+  if (state.enableWeb) current.push('Web UI');
+  if (state.enableTelegram) current.push('Telegram');
+  if (state.enableDiscord) current.push('Discord');
+  console.log(`  Currently enabled: ${current.join(', ')}\n`);
 
   const transports = await multiChoice('How will you talk to your agent?', [
     'Terminal (TUI) — always on',
@@ -135,150 +232,250 @@ async function main() {
     'Discord',
   ]);
 
-  const enableWeb = transports.some(t => t.includes('Web'));
-  const enableTelegram = transports.some(t => t.includes('Telegram'));
-  const enableDiscord = transports.some(t => t.includes('Discord'));
+  state.enableWeb = transports.some(t => t.includes('Web'));
+  state.enableTelegram = transports.some(t => t.includes('Telegram'));
+  state.enableDiscord = transports.some(t => t.includes('Discord'));
 
-  let webPort = 3000;
-  let telegramNote = '';
-  let discordNote = '';
-
-  if (enableWeb) {
-    const port = await ask('Web UI port?', '3000');
-    webPort = parseInt(port) || 3000;
+  if (state.enableWeb) {
+    const port = await ask('Web UI port?', String(state.webPort));
+    state.webPort = parseInt(port) || 3000;
   }
 
-  if (enableTelegram) {
+  if (state.enableTelegram) {
     console.log('\n  To set up Telegram:');
     console.log('  1. Message @BotFather on Telegram');
     console.log('  2. Send /newbot and follow the prompts');
-    console.log('  3. Copy the bot token');
-    const token = await ask('Telegram bot token (or press Enter to set later)');
-    if (token) {
-      telegramNote = `\n  Set TELEGRAM_BOT_TOKEN="${token}" in your environment.`;
-    } else {
-      telegramNote = '\n  Set TELEGRAM_BOT_TOKEN in your environment when ready.';
-    }
-    console.log(telegramNote);
+    console.log('  3. Copy the bot token and add it to your .env file');
+    console.log('     TELEGRAM_BOT_TOKEN=your-token-here\n');
   }
 
-  if (enableDiscord) {
+  if (state.enableDiscord) {
     console.log('\n  To set up Discord:');
     console.log('  1. Go to https://discord.com/developers/applications');
     console.log('  2. Create a new application → Bot tab → copy token');
-    console.log('  3. Under OAuth2 → URL Generator, select "bot" scope');
-    const token = await ask('Discord bot token (or press Enter to set later)');
-    if (token) {
-      discordNote = `\n  Set DISCORD_BOT_TOKEN="${token}" in your environment.`;
-    } else {
-      discordNote = '\n  Set DISCORD_BOT_TOKEN in your environment when ready.';
-    }
-    console.log(discordNote);
+    console.log('  3. Add it to your .env file');
+    console.log('     DISCORD_BOT_TOKEN=your-token-here\n');
   }
+}
 
-  // ── 4. Personal context ─────────────────────────────────────
+async function wizardPersonal(state: ConfigState): Promise<void> {
   console.log('\n  ── About You ──');
   console.log('  (This helps your agent be useful from day one. All optional.)\n');
 
-  const userName = await ask('Your name');
+  state.userName = await ask('Your name');
   const location = await ask('Where are you based? (city/country)');
-  const timezone = await ask('Timezone', 'Europe/London');
+  state.timezone = await ask('Timezone', state.timezone);
   const role = await ask('What do you do? (job title / company)');
   const interests = await ask('Key interests or hobbies (comma-separated)');
   const extras = await ask('Anything else the agent should know? (one line)');
 
-  // ── 5. Write config ─────────────────────────────────────────
-  console.log('\n  ── Writing Configuration ──\n');
+  state.contextParts = [];
+  if (state.userName) state.contextParts.push(`The user's name is ${state.userName}.`);
+  if (location) state.contextParts.push(`Based in ${location}.`);
+  if (role) state.contextParts.push(`Works as ${role}.`);
+  if (interests) state.contextParts.push(`Interests: ${interests}.`);
+  if (extras) state.contextParts.push(extras);
+}
 
-  // Build personality with personal context
-  let fullPersonality = personality;
-  const contextParts: string[] = [];
-  if (userName) contextParts.push(`The user's name is ${userName}.`);
-  if (location) contextParts.push(`Based in ${location}.`);
-  if (role) contextParts.push(`Works as ${role}.`);
-  if (interests) contextParts.push(`Interests: ${interests}.`);
-  if (extras) contextParts.push(extras);
+// ── Config generation ────────────────────────────────────────────
 
-  if (contextParts.length > 0) {
-    fullPersonality += '\n\n' + contextParts.join(' ');
+function generateConfig(state: ConfigState): string {
+  let fullPersonality = state.personality;
+
+  if (state.contextParts.length > 0) {
+    fullPersonality += '\n\n' + state.contextParts.join(' ');
   }
 
   fullPersonality += `\n\nWhen you receive a complex request, consider whether it needs background work. If so, create a task, tell the user you'll work on it, and message them back when done. Don't make the user wait for things that take time — work autonomously.`;
 
-  // Generate TOML
-  const config = `[identity]
-name = "${agentName}"
+  let config = `[identity]
+name = "${state.agentName}"
 personality = """
 ${fullPersonality}
 """
 
+# ── LLM Configuration ──────────────────────────────────────────────
+# Cloud model — used for complex tasks, long context, multi-tool work
 [llm]
 provider = "anthropic"
-model = "${modelString}"
+model = "${state.modelString}"
 api_key_env = "ANTHROPIC_API_KEY"
 max_tokens = 8192
 temperature = 0.7
-${useLocal.toLowerCase() === 'y' ? `
+
+# Local model — used for simple chat, quick lookups, single-tool tasks
+# Runs via Ollama. If Ollama isn't running, Sigil falls back to cloud-only.
 [llm.local]
 provider = "ollama"
-model = "${localModel}"
-base_url = "${ollamaUrl}"
-` : ''}
+model = "${state.localModel}"
+base_url = "${state.ollamaUrl || 'http://localhost:11434'}"
+
+# ── Routing ─────────────────────────────────────────────────────────
 [routing]
-strategy = "${strategy}"
+strategy = "${state.strategy}"
 local_tool_limit = 4
 cloud_only_tools = ["browser", "code_exec"]
 escalation_patterns = [
-  "write a report", "analyse this", "analyze this",
-  "in detail", "comprehensive", "step by step",
-  "refactor", "architect", "design system",
+  "write a report",
+  "analyse this",
+  "analyze this",
+  "in detail",
+  "comprehensive",
+  "step by step",
+  "refactor",
+  "architect",
+  "design system",
 ]
 
+# ── Memory ──────────────────────────────────────────────────────────
 [memory]
 db_path = "./data/memory.db"
 max_recall = 10
 
+# ── Transports ──────────────────────────────────────────────────────
 [transports.tui]
 enabled = true
 
 [transports.web]
-enabled = ${enableWeb}
-port = ${webPort}
+enabled = ${state.enableWeb}
+port = ${state.webPort}
 host = "127.0.0.1"
 
 [transports.telegram]
-enabled = ${enableTelegram}
-${enableTelegram ? 'token_env = "TELEGRAM_BOT_TOKEN"' : '# token_env = "TELEGRAM_BOT_TOKEN"'}
+enabled = ${state.enableTelegram}
+${state.enableTelegram ? 'token_env = "TELEGRAM_BOT_TOKEN"' : '# token_env = "TELEGRAM_BOT_TOKEN"'}
 
 [transports.discord]
-enabled = ${enableDiscord}
-${enableDiscord ? 'token_env = "DISCORD_BOT_TOKEN"' : '# token_env = "DISCORD_BOT_TOKEN"'}
+enabled = ${state.enableDiscord}
+${state.enableDiscord ? 'token_env = "DISCORD_BOT_TOKEN"' : '# token_env = "DISCORD_BOT_TOKEN"'}
 
+# ── Scheduler ───────────────────────────────────────────────────────
 [scheduler]
-enabled = true
-timezone = "${timezone}"
+enabled = ${state.enableTelegram || state.enableDiscord || state.enableWeb}
+timezone = "${state.timezone}"
 
+# ── Tools ───────────────────────────────────────────────────────────
 [tools]
 allow = ["*"]
 deny = []
 `;
 
+  // Preserve updater section if it existed
+  if (state.updater) {
+    config += `
+# ── Auto-Update ─────────────────────────────────────────────────
+[updater]
+auto_update = ${state.updater.auto_update ?? false}
+branch = "${state.updater.branch ?? 'main'}"
+check_interval_ms = ${state.updater.check_interval_ms ?? 3600000}
+`;
+  } else {
+    config += `
+# ── Auto-Update ─────────────────────────────────────────────────
+[updater]
+auto_update = false
+branch = "main"
+check_interval_ms = 3600000   # 1 hour (in milliseconds)
+`;
+  }
+
+  return config;
+}
+
+// ── Main ─────────────────────────────────────────────────────────
+
+const SECTIONS = {
+  identity: 'Identity — agent name & personality',
+  llm: 'LLM — cloud model, local model, routing',
+  transports: 'Transports — TUI, web, Telegram, Discord',
+  personal: 'About You — name, location, timezone, interests',
+} as const;
+
+type SectionKey = keyof typeof SECTIONS;
+
+async function main() {
+  console.log('\n  ╔══════════════════════════════════════╗');
+  console.log('  ║      Sigil — Onboarding Wizard      ║');
+  console.log('  ╚══════════════════════════════════════╝\n');
+
   const configPath = resolve('sigil.toml');
+  const existing = loadExisting(configPath);
+
+  let state: ConfigState;
+  let sectionsToRun: SectionKey[];
+
+  if (existing) {
+    // ── Reconfigure mode ──
+    console.log('  Existing configuration found.\n');
+    state = stateFromExisting(existing);
+
+    const mode = await choose('What would you like to do?', [
+      'Update specific sections',
+      'Start fresh (full setup from scratch)',
+    ]);
+
+    if (mode.includes('fresh')) {
+      // Full setup — same as first run
+      state = {
+        agentName: 'Sigil', personality: '', modelString: 'claude-sonnet-4-20250514',
+        hasApiKey: true, useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
+        strategy: 'smart', enableWeb: false, enableTelegram: false, enableDiscord: false,
+        webPort: 3000, timezone: 'Europe/London', contextParts: [], userName: '',
+      };
+      sectionsToRun = ['identity', 'llm', 'transports', 'personal'];
+    } else {
+      const sectionKeys = Object.keys(SECTIONS) as SectionKey[];
+      const sectionLabels = Object.values(SECTIONS);
+      const chosen = await multiChoice('Which sections do you want to update?', sectionLabels);
+      sectionsToRun = chosen.map(label => {
+        const idx = sectionLabels.indexOf(label as typeof sectionLabels[number]);
+        return sectionKeys[idx];
+      });
+    }
+
+    // Back up existing config
+    const backupPath = backupConfig(configPath);
+    console.log(`\n  Backed up current config to ${backupPath}`);
+  } else {
+    // ── First run — full setup ──
+    state = {
+      agentName: 'Sigil', personality: '', modelString: 'claude-sonnet-4-20250514',
+      hasApiKey: true, useLocal: true, localModel: '', ollamaUrl: 'http://localhost:11434',
+      strategy: 'smart', enableWeb: false, enableTelegram: false, enableDiscord: false,
+      webPort: 3000, timezone: 'Europe/London', contextParts: [], userName: '',
+    };
+    sectionsToRun = ['identity', 'llm', 'transports', 'personal'];
+  }
+
+  // ── Run selected section wizards ──
+  for (const section of sectionsToRun) {
+    switch (section) {
+      case 'identity': await wizardIdentity(state); break;
+      case 'llm': await wizardLLM(state); break;
+      case 'transports': await wizardTransports(state); break;
+      case 'personal': await wizardPersonal(state); break;
+    }
+  }
+
+  // ── Write config ──
+  console.log('\n  ── Writing Configuration ──\n');
+
+  const config = generateConfig(state);
   writeFileSync(configPath, config, 'utf-8');
   console.log(`  ✓ Wrote ${configPath}`);
 
-  // Write initial personal skill if we have context
-  if (contextParts.length > 0) {
+  // Write personal skill if we have context (only when personal section was run)
+  if (sectionsToRun.includes('personal') && state.contextParts.length > 0) {
     const skillsDir = resolve('skills');
     mkdirSync(skillsDir, { recursive: true });
 
-    const personalSkill = `# About ${userName || 'the User'}
+    const personalSkill = `# About ${state.userName || 'the User'}
 
-${contextParts.join('\n')}
+${state.contextParts.join('\n')}
 
 ## Notes
 - Add more context here as you learn things
-- ${agentName} will use this to personalise responses
+- ${state.agentName} will use this to personalise responses
 `;
 
     const skillPath = resolve('skills', 'personal.md');
@@ -288,30 +485,33 @@ ${contextParts.join('\n')}
 
   // Create data directory
   mkdirSync(resolve('data'), { recursive: true });
-  console.log('  ✓ Created data directory');
 
-  // ── Summary ─────────────────────────────────────────────────
+  // ── Summary ──
+  const updatedLabel = sectionsToRun.length < 4
+    ? `Updated: ${sectionsToRun.join(', ')}`
+    : 'Full setup complete';
+
   console.log('\n  ══════════════════════════════════════');
-  console.log(`  ${agentName} is ready to go!\n`);
-  console.log('  Next steps:');
+  console.log(`  ${state.agentName} — ${updatedLabel}\n`);
 
-  if (hasApiKey.toLowerCase() !== 'y') {
-    console.log('  1. Set your API key:');
-    console.log('     export ANTHROPIC_API_KEY="sk-ant-..."');
+  if (!state.hasApiKey) {
+    console.log('  Set your API key:');
+    console.log('     sigil env\n');
   }
 
-  if (useLocal.toLowerCase() === 'y') {
-    console.log(`  ${hasApiKey.toLowerCase() !== 'y' ? '2' : '1'}. Pull the local model:`);
-    console.log(`     ollama pull ${localModel}`);
+  if (state.useLocal && state.localModel) {
+    console.log(`  Pull the local model:`);
+    console.log(`     ollama pull ${state.localModel}\n`);
   }
 
-  console.log(`\n  Start ${agentName}:`);
-  console.log('     npm run dev\n');
+  if (existing) {
+    console.log('  Restart to apply changes:');
+    console.log('     sigil restart\n');
+  } else {
+    console.log(`  Start ${state.agentName}:`);
+    console.log('     sigil start\n');
+  }
 
-  if (telegramNote) console.log(telegramNote);
-  if (discordNote) console.log(discordNote);
-
-  console.log('');
   rl.close();
 }
 

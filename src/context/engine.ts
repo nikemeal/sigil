@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { resolve, join, relative } from 'node:path';
 import type { Message, SigilConfig } from '../gateway/types.js';
 import { MemoryStore } from './memory.js';
 
@@ -25,15 +25,32 @@ export class ContextEngine {
     this.loadSkills();
   }
 
-  /** Load skill files from /skills/ directory */
+  /** Recursively collect all files from a directory */
+  private collectFiles(dir: string): string[] {
+    const results: string[] = [];
+    if (!existsSync(dir)) return results;
+
+    for (const entry of readdirSync(dir)) {
+      if (entry.startsWith('.') || entry.startsWith('_')) continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) {
+        results.push(...this.collectFiles(full));
+      } else {
+        results.push(full);
+      }
+    }
+    return results;
+  }
+
+  /** Load skill files from /skills/ directory (recursively) */
   private loadSkills(): void {
     const skillsDir = resolve('skills');
     if (!existsSync(skillsDir)) return;
 
-    const files = readdirSync(skillsDir).filter(f => f.endsWith('.md'));
-    for (const file of files) {
-      const name = file.replace('.md', '');
-      const content = readFileSync(join(skillsDir, file), 'utf-8');
+    const files = this.collectFiles(skillsDir).filter(f => f.endsWith('.md'));
+    for (const filePath of files) {
+      const name = relative(skillsDir, filePath).replace(/\.md$/, '');
+      const content = readFileSync(filePath, 'utf-8');
       this.skills.set(name, content);
     }
 
