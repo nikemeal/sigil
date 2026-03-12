@@ -147,6 +147,13 @@ async function main() {
 
   // 7. Create agent and wire to gateway
   const agent = new Agent(llm, context, tools);
+
+  // Wire interim notifications — when the agent sends an early "I'll work on that"
+  // message, broadcast it to all transports immediately
+  agent.onNotify((response) => {
+    gateway.broadcast(response);
+  });
+
   gateway.onMessage(msg => agent.process(msg));
 
   // 8. Start scheduler

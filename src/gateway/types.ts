@@ -39,6 +39,8 @@ export interface Response {
   artifacts?: Artifact[];
   actions?: Action[];
   timestamp: Date;
+  /** Extra data — e.g. { hadInterim: true } when an interim reply was already sent */
+  metadata?: Record<string, unknown>;
 }
 
 // Tool system

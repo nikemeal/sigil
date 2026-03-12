@@ -8,15 +8,28 @@ import { ToolRegistry } from '../tools/registry.js';
 
 const MAX_TOOL_ROUNDS = 10;
 
+/**
+ * Callback for sending interim messages during long-running work.
+ * The agent calls this to push updates to the user while it's still
+ * processing (e.g. "I'll check the InvokeAI API and generate that for you").
+ */
+export type InterimNotify = (response: Response) => void;
+
 export class Agent {
   private llm: LLMProvider;
   private context: ContextEngine;
   private tools: ToolRegistry;
+  private notify: InterimNotify | null = null;
 
   constructor(llm: LLMProvider, context: ContextEngine, tools: ToolRegistry) {
     this.llm = llm;
     this.context = context;
     this.tools = tools;
+  }
+
+  /** Register a callback for interim/async messages (wired up by index.ts) */
+  onNotify(fn: InterimNotify): void {
+    this.notify = fn;
   }
 
   async process(message: Message): Promise<Response> {
@@ -29,6 +42,7 @@ export class Agent {
     // 2. Agentic loop — keep going until the model stops calling tools
     let completion: CompletionResponse;
     let round = 0;
+    let sentInterim = false;
 
     // Build a running message history for tool results
     const messages = [...ctx.messages];
@@ -45,6 +59,21 @@ export class Agent {
       // If no tool calls, we're done
       if (!completion.toolCalls || completion.toolCalls.length === 0) {
         break;
+      }
+
+      // ── Split response: send interim message to user ──
+      // If the LLM returned both text AND tool calls on the first round,
+      // the text is an acknowledgement ("I'll check the API..."). Send it
+      // to the user immediately so they're not left waiting in silence.
+      if (round === 1 && completion.content.trim() && this.notify) {
+        this.notify({
+          id: randomUUID(),
+          replyTo: message.id,
+          content: completion.content,
+          timestamp: new Date(),
+        });
+        sentInterim = true;
+        console.log(`[agent] Sent interim response, continuing tool work...`);
       }
 
       // Execute each tool call
@@ -101,12 +130,22 @@ export class Agent {
       );
     }
 
-    return {
+    const finalResponse: Response = {
       id: randomUUID(),
       replyTo: message.id,
       content: completion!.content,
       actions: actions.length > 0 ? actions : undefined,
       timestamp: new Date(),
     };
+
+    // 5. If we sent an interim message, also broadcast the final result.
+    //    The caller (transport) will get the return value too, but the
+    //    interim was already sent via notify — so we flag it so the
+    //    transport can decide whether to show the final response or not.
+    if (sentInterim) {
+      finalResponse.metadata = { ...finalResponse.metadata, hadInterim: true };
+    }
+
+    return finalResponse;
   }
 }

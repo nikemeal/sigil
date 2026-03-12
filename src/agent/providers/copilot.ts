@@ -47,6 +47,7 @@ export class CopilotProvider implements LLMProvider {
 
     if (tools.length > 0) {
       body.tools = tools;
+      body.tool_choice = 'auto';
     }
 
     const res = await fetch(COPILOT_CHAT_URL, {
@@ -72,7 +73,18 @@ export class CopilotProvider implements LLMProvider {
       throw new Error(`Copilot API error (${res.status}): ${err}`);
     }
 
-    return this.parseResponse(await res.json());
+    const json = await res.json();
+
+    // Debug: log when tools were sent but none came back
+    if (tools.length > 0) {
+      const choice = (json as OpenAIChatResponse).choices?.[0];
+      const hasCalls = choice?.message?.tool_calls && choice.message.tool_calls.length > 0;
+      if (!hasCalls) {
+        console.log(`[copilot] ${tools.length} tool(s) sent but model returned no tool_calls (finish_reason: ${choice?.finish_reason ?? 'unknown'})`);
+      }
+    }
+
+    return this.parseResponse(json);
   }
 
   private parseResponse(data: OpenAIChatResponse): CompletionResponse {
