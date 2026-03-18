@@ -89,14 +89,14 @@ rsync -a --exclude=node_modules --exclude=.git --exclude=data --exclude=local \
 mkdir -p "${INSTALL_DIR}/data"
 mkdir -p "${INSTALL_DIR}/local"
 
-# Install dependencies
+# Install dependencies (including devDependencies for TypeScript build)
 echo "Installing dependencies..."
 cd "${INSTALL_DIR}"
-npm install --production 2>&1 | tail -1
+npm install
 
-# Build (needed before onboarding can run)
+# Build TypeScript → dist/
 echo "Building..."
-npx tsc 2>&1 | tail -5
+npx tsc
 
 # Fix ownership
 chown -R "${SIGIL_USER}:${SIGIL_USER}" "${INSTALL_DIR}"
