@@ -40,6 +40,12 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ── Stop existing service if running ─────────────────────────────────
+if systemctl is-active sigil &>/dev/null; then
+  echo "Stopping existing Sigil service..."
+  systemctl stop sigil
+fi
+
 # ── Install Node.js if not present ───────────────────────────────────
 if command -v node &>/dev/null; then
   NODE_VER=$(node --version)
@@ -87,6 +93,10 @@ mkdir -p "${INSTALL_DIR}/local"
 echo "Installing dependencies..."
 cd "${INSTALL_DIR}"
 npm install --production 2>&1 | tail -1
+
+# Build (needed before onboarding can run)
+echo "Building..."
+npx tsc 2>&1 | tail -5
 
 # Fix ownership
 chown -R "${SIGIL_USER}:${SIGIL_USER}" "${INSTALL_DIR}"
@@ -229,14 +239,27 @@ echo
 echo "=== Provisioning complete ==="
 echo
 
-if [[ ! -f "${INSTALL_DIR}/sigil.toml" ]]; then
+# Check if existing config is v2 format (has [[models]] section)
+NEEDS_ONBOARD=true
+if [[ -f "${INSTALL_DIR}/sigil.toml" ]]; then
+  if grep -q '^\[\[models\]\]' "${INSTALL_DIR}/sigil.toml" 2>/dev/null; then
+    NEEDS_ONBOARD=false
+    echo "Valid v2 config found. To reconfigure: sigil onboard"
+    echo "To start: sigil start"
+    echo "To connect: sigil tui"
+  else
+    # Old v1 config — back it up so onboarding runs fresh
+    BACKUP="${INSTALL_DIR}/sigil.toml.v1-backup"
+    cp "${INSTALL_DIR}/sigil.toml" "${BACKUP}"
+    rm "${INSTALL_DIR}/sigil.toml"
+    echo "Old v1 config backed up to ${BACKUP}"
+  fi
+fi
+
+if [[ "${NEEDS_ONBOARD}" == "true" ]]; then
   echo "Running onboarding wizard..."
   echo "(This will configure, build, and start Sigil)"
   echo
   cd "${INSTALL_DIR}" && sudo -u "${SIGIL_USER}" node dist/onboard.js
-else
-  echo "Config already exists. To reconfigure: sigil onboard"
-  echo "To start: sigil start"
-  echo "To connect: sigil tui"
 fi
 echo
