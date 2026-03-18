@@ -177,7 +177,7 @@ case "${1:-help}" in
     cd "${INSTALL_DIR}" && node dist/transports/tui-client.js
     ;;
   onboard)
-    cd "${INSTALL_DIR}" && sudo -u sigil node dist/onboard.js
+    cd "${INSTALL_DIR}" && node dist/onboard.js
     ;;
   config)
     ${EDITOR:-nano} "${INSTALL_DIR}/sigil.toml"
@@ -243,7 +243,9 @@ if [[ ! -f "${INSTALL_DIR}/sigil.toml" ]]; then
   echo "Running onboarding wizard..."
   echo "(This will configure, build, and start Sigil)"
   echo
-  cd "${INSTALL_DIR}" && sudo -u "${SIGIL_USER}" node dist/onboard.js
+  cd "${INSTALL_DIR}" && node dist/onboard.js
+  # Fix ownership of files created by onboarding (running as root)
+  chown -R "${SIGIL_USER}:${SIGIL_USER}" "${INSTALL_DIR}/sigil.toml" "${INSTALL_DIR}/.env" 2>/dev/null
 else
   echo "Config already exists. To reconfigure: sigil onboard"
   echo "To start: sigil start"
