@@ -8,9 +8,8 @@
  * sends messages, and displays responses. Multiple TUI clients can connect
  * simultaneously (they all see the same conversation).
  *
- * Shows real-time status: thinking indicator for active processing,
- * "queued" badges for messages waiting in line. The spinner pauses
- * when the user is typing so it doesn't interfere with input.
+ * Input is blocked while waiting for a response — keeps the display clean
+ * and matches the sequential nature of conversation.
  */
 
 import { createInterface } from 'node:readline';
@@ -24,14 +23,11 @@ interface ServerMessage {
   model?: string;
   messageId?: string;
   severity?: string;
-  status?: 'queued' | 'processing';
-  position?: number;
 }
 
 // Config — in module 1 this is hardcoded, later reads from sigil.toml
 const WS_URL = process.env.SIGIL_WS_URL ?? 'ws://127.0.0.1:3033/ws';
 
-// Thinking indicator frames
 const SPINNER = ['   thinking', '.  thinking', '.. thinking', '...thinking'];
 
 function main(): void {
@@ -39,12 +35,9 @@ function main(): void {
 
   const ws = new WebSocket(WS_URL);
   let connected = false;
+  let waiting = false;
   let spinnerInterval: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame = 0;
-  let userTyping = false;
-
-  // Track pending messages: messageId → status
-  const pending = new Map<string, 'queued' | 'processing'>();
 
   const rl = createInterface({
     input: process.stdin,
@@ -52,29 +45,18 @@ function main(): void {
     prompt: chalk.cyan('you > '),
   });
 
-  /** Build the status suffix for queued messages */
-  function queueSuffix(): string {
-    const queuedCount = [...pending.values()].filter((s) => s === 'queued').length;
-    return queuedCount > 0 ? chalk.yellow(` +${queuedCount} queued`) : '';
-  }
-
-  /** Show thinking spinner (only when user isn't typing) */
   function startSpinner(): void {
-    stopSpinner();
-
-    const processingCount = [...pending.values()].filter((s) => s === 'processing').length;
-    if (processingCount === 0 || userTyping) return;
-
-    const suffix = queueSuffix();
+    waiting = true;
     spinnerFrame = 0;
-    process.stdout.write(chalk.dim(SPINNER[0]) + suffix);
+    process.stdout.write(chalk.dim(SPINNER[0]));
     spinnerInterval = setInterval(() => {
       spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
-      process.stdout.write(`\r\x1b[K${chalk.dim(SPINNER[spinnerFrame])}${suffix}`);
+      process.stdout.write(`\r\x1b[K${chalk.dim(SPINNER[spinnerFrame])}`);
     }, 400);
   }
 
   function stopSpinner(): void {
+    waiting = false;
     if (spinnerInterval) {
       clearInterval(spinnerInterval);
       spinnerInterval = null;
@@ -82,86 +64,45 @@ function main(): void {
     process.stdout.write('\r\x1b[K');
   }
 
-  /** Show prompt and let the user type. Spinner is paused while typing. */
-  function showPrompt(): void {
-    stopSpinner();
-    userTyping = true;
-    rl.prompt();
-  }
-
-  /** After sending, give control back to the spinner */
-  function afterSend(): void {
-    userTyping = false;
-    if (pending.size > 0) {
-      startSpinner();
-    } else {
-      showPrompt();
-    }
-  }
-
-  /** Handle incoming status/response — clear spinner, print, resume */
-  function handleOutput(fn: () => void): void {
-    stopSpinner();
-    fn();
-    if (pending.size > 0) {
-      startSpinner();
-    } else {
-      showPrompt();
-    }
-  }
-
   ws.on('open', () => {
     connected = true;
     console.log(chalk.green('Connected to Sigil.'));
     console.log(chalk.dim('Type a message and press Enter. Ctrl+C to quit.\n'));
-    showPrompt();
+    rl.prompt();
   });
 
   ws.on('message', (raw) => {
     try {
       const data = JSON.parse(raw.toString()) as ServerMessage;
 
+      // Ignore status messages — we handle flow with waiting flag
+      if (data.type === 'status') return;
+
+      stopSpinner();
+
       switch (data.type) {
-        case 'status':
-          if (data.messageId && data.status) {
-            pending.set(data.messageId, data.status);
-            // Only update spinner if user isn't typing
-            if (!userTyping) {
-              stopSpinner();
-              startSpinner();
-            }
+        case 'response':
+          console.log(chalk.green('sigil > ') + data.content);
+          if (data.model) {
+            console.log(chalk.dim(`  [${data.model}]`));
           }
           break;
 
-        case 'response':
-          if (data.messageId) pending.delete(data.messageId);
-          handleOutput(() => {
-            console.log(chalk.green('sigil > ') + data.content);
-            if (data.model) {
-              console.log(chalk.dim(`  [${data.model}]`));
-            }
-            console.log();
-          });
+        case 'notification': {
+          const color = data.severity === 'error' ? chalk.red
+            : data.severity === 'warn' ? chalk.yellow
+            : chalk.blue;
+          console.log(color(`[${data.severity}] `) + data.content);
           break;
-
-        case 'notification':
-          handleOutput(() => {
-            const color = data.severity === 'error' ? chalk.red
-              : data.severity === 'warn' ? chalk.yellow
-              : chalk.blue;
-            console.log(color(`[${data.severity}] `) + data.content);
-            console.log();
-          });
-          break;
+        }
 
         case 'error':
-          if (data.messageId) pending.delete(data.messageId);
-          handleOutput(() => {
-            console.log(chalk.red('error > ') + data.content);
-            console.log();
-          });
+          console.log(chalk.red('error > ') + data.content);
           break;
       }
+
+      console.log();
+      rl.prompt();
     } catch {
       // Ignore malformed messages
     }
@@ -190,9 +131,12 @@ function main(): void {
   });
 
   rl.on('line', (line) => {
+    // Block input while waiting for response
+    if (waiting) return;
+
     const input = line.trim();
     if (!input) {
-      showPrompt();
+      rl.prompt();
       return;
     }
 
@@ -207,17 +151,17 @@ function main(): void {
       console.log(chalk.dim('  /quit, /exit  — Disconnect'));
       console.log(chalk.dim('  /help         — Show this help'));
       console.log();
-      showPrompt();
+      rl.prompt();
       return;
     }
 
     // Send message to server
     if (connected && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'message', content: input }));
-      afterSend();
+      startSpinner();
     } else {
       console.log(chalk.red('Not connected to Sigil.'));
-      showPrompt();
+      rl.prompt();
     }
   });
 
