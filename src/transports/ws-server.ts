@@ -1,95 +1,149 @@
-import Fastify from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
-import type { Gateway } from '../gateway/gateway.js';
-import type { WebSocket } from 'ws';
-
 /**
- * WebSocket transport server.
+ * WebSocket Server
  *
- * Runs inside the main Sigil process. Clients (TUI, web UI) connect
- * and exchange JSON messages:
+ * Fastify + WebSocket server that the TUI client (and future web UI) connects to.
+ * The service runs headless — this is its external interface.
  *
- *   Client → Server: { type: "message", content: "hello", threadId?: "..." }
- *   Server → Client: { type: "response", content: "...", actions?: [...] }
- *   Server → Client: { type: "notify", content: "..." }  (async task results)
+ * JSON protocol:
+ *   Client → Server: { type: "message", content: "..." }
+ *   Server → Client: { type: "response", content: "...", model: "...", messageId: "..." }
+ *   Server → Client: { type: "notification", content: "...", severity: "info"|"warn"|"error" }
+ *   Server → Client: { type: "error", content: "...", messageId: "..." }
  */
 
-interface WSMessage {
+import Fastify from 'fastify';
+import websocket from '@fastify/websocket';
+import type { WebSocket } from 'ws';
+import type { SigilConfig } from '../types.js';
+import { EventBus } from '../lib/event-bus.js';
+import { Gateway } from '../gateway/gateway.js';
+
+/** Message from client to server */
+interface ClientMessage {
   type: 'message';
   content: string;
-  threadId?: string;
 }
 
-interface WSResponse {
-  type: 'response' | 'notify';
+/** Messages from server to client */
+interface ServerMessage {
+  type: 'response' | 'notification' | 'error';
   content: string;
-  actions?: Array<{ tool: string; durationMs: number }>;
+  model?: string;
+  messageId?: string;
+  severity?: string;
 }
 
-export async function startWSServer(
-  gateway: Gateway,
-  host: string,
-  port: number,
-): Promise<ReturnType<typeof Fastify>> {
-  const app = Fastify({ logger: false });
-  await app.register(fastifyWebsocket);
+export class WSServer {
+  private fastify = Fastify({ logger: false });
+  private bus: EventBus;
+  private gateway: Gateway;
+  private config: SigilConfig;
+  private clients = new Set<WebSocket>();
 
-  const clients = new Set<WebSocket>();
+  constructor(bus: EventBus, gateway: Gateway, config: SigilConfig) {
+    this.bus = bus;
+    this.gateway = gateway;
+    this.config = config;
+  }
 
-  app.get('/ws', { websocket: true }, (socket) => {
-    clients.add(socket);
-    console.log(`[ws] Client connected (${clients.size} total)`);
+  async start(): Promise<void> {
+    await this.fastify.register(websocket);
 
-    socket.on('message', async (raw) => {
-      try {
-        const msg: WSMessage = JSON.parse(raw.toString());
+    // WebSocket endpoint
+    this.fastify.get('/ws', { websocket: true }, (socket) => {
+      this.clients.add(socket);
+      console.log(`[WS] Client connected (${this.clients.size} total)`);
 
-        if (msg.type !== 'message' || !msg.content) {
-          socket.send(JSON.stringify({ type: 'error', content: 'Invalid message format' }));
-          return;
+      this.bus.emit('transport:connected', { type: 'websocket', id: String(this.clients.size) });
+
+      socket.on('message', (raw) => {
+        try {
+          const data = JSON.parse(raw.toString()) as ClientMessage;
+
+          if (data.type === 'message' && data.content) {
+            this.gateway.send(data.content, 'websocket');
+          }
+        } catch (err) {
+          this.sendTo(socket, {
+            type: 'error',
+            content: 'Invalid message format. Expected: { type: "message", content: "..." }',
+          });
         }
+      });
 
-        const response = await gateway.sendText(
-          msg.content,
-          'web',
-          msg.threadId ?? 'main',
-        );
+      socket.on('close', () => {
+        this.clients.delete(socket);
+        console.log(`[WS] Client disconnected (${this.clients.size} total)`);
+        this.bus.emit('transport:disconnected', { type: 'websocket', id: '' });
+      });
 
-        const reply: WSResponse = {
-          type: 'response',
-          content: response.content,
-          actions: response.actions?.map(a => ({ tool: a.tool, durationMs: a.durationMs })),
-        };
-
-        socket.send(JSON.stringify(reply));
-
-        // Also push to all other transports (Telegram, etc.) so messages are consolidated
-        gateway.broadcastExcept('web', response);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        socket.send(JSON.stringify({ type: 'error', content: message }));
-      }
+      socket.on('error', (err) => {
+        console.error('[WS] Socket error:', err.message);
+        this.clients.delete(socket);
+      });
     });
 
-    socket.on('close', () => {
-      clients.delete(socket);
-      console.log(`[ws] Client disconnected (${clients.size} total)`);
+    // Health check endpoint (useful for monitoring)
+    this.fastify.get('/health', async () => {
+      return { status: 'ok', clients: this.clients.size };
     });
-  });
 
-  // Listen for async notifications ONLY (task completions, health alerts, etc.)
-  gateway.onResponse('web', (response) => {
-    const msg: WSResponse = { type: 'notify', content: response.content };
-    const payload = JSON.stringify(msg);
-    for (const client of clients) {
-      if (client.readyState === 1) {
-        client.send(payload);
+    // Subscribe to broadcasts and send to all connected clients
+    this.bus.on('broadcast:response', (response) => {
+      this.broadcast({
+        type: 'response',
+        content: response.content,
+        model: response.model,
+        messageId: response.messageId,
+      });
+    });
+
+    this.bus.on('broadcast:notification', (notification) => {
+      this.broadcast({
+        type: 'notification',
+        content: notification.content,
+        severity: notification.severity,
+      });
+    });
+
+    this.bus.on('message:error', (error) => {
+      this.broadcast({
+        type: 'error',
+        content: error.error,
+        messageId: error.messageId,
+      });
+    });
+
+    // Start listening
+    const { port, host } = this.config.transports.web;
+    await this.fastify.listen({ port, host });
+    console.log(`[WS] Server listening on ${host}:${port}`);
+  }
+
+  async stop(): Promise<void> {
+    // Close all client connections
+    for (const client of this.clients) {
+      client.close();
+    }
+    this.clients.clear();
+    await this.fastify.close();
+    console.log('[WS] Server stopped');
+  }
+
+  /** Send a message to a specific client */
+  private sendTo(socket: WebSocket, message: ServerMessage): void {
+    if (socket.readyState === socket.OPEN) {
+      socket.send(JSON.stringify(message));
+    }
+  }
+
+  /** Broadcast a message to all connected clients */
+  private broadcast(message: ServerMessage): void {
+    const data = JSON.stringify(message);
+    for (const client of this.clients) {
+      if (client.readyState === client.OPEN) {
+        client.send(data);
       }
     }
-  });
-
-  await app.listen({ host, port });
-  console.log(`[ws] Server listening on ws://${host}:${port}/ws`);
-
-  return app;
+  }
 }

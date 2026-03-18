@@ -1,0 +1,14 @@
+services:
+  sigil:
+    build: .
+    ports:
+      - "3033:3033"
+    volumes:
+      - ./data:/app/data
+      - ./local:/app/local
+      - ./skills:/app/skills
+      - ./sigil.toml:/app/sigil.toml:ro
+      - ./.env:/app/.env:ro
+    env_file:
+      - .env
+    restart: unless-stopped

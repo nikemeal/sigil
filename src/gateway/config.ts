@@ -1,112 +1,118 @@
+/**
+ * Configuration Loader
+ *
+ * Reads sigil.toml, merges with defaults, and returns a typed SigilConfig.
+ * Config grows with each module — new sections are added with sensible defaults
+ * so existing installs don't break on update.
+ *
+ * TOML uses snake_case, TypeScript uses camelCase. Conversion happens here.
+ */
+
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import TOML from '@iarna/toml';
-import type { SigilConfig } from './types.js';
+import * as TOML from '@iarna/toml';
+import type { SigilConfig, ModelConfig } from '../types.js';
 
-const DEFAULT_CONFIG: SigilConfig = {
+/** Where we look for config, relative to project root */
+const CONFIG_PATH = resolve(process.cwd(), 'sigil.toml');
+
+/** Defaults for a fresh install. Just enough to run with one API key. */
+const DEFAULTS: SigilConfig = {
+  version: '2.0.0',
   identity: {
     name: 'Sigil',
-    personality: 'You are Sigil, a personal AI assistant. Be direct, helpful, and proactive.',
+    personality: 'A helpful, direct personal AI agent.',
   },
-  llm: {
-    provider: 'anthropic',
-    model: 'claude-sonnet-4-20250514',
-    apiKeyEnv: 'ANTHROPIC_API_KEY',
-    maxTokens: 8192,
-    temperature: 0.7,
-    local: {
-      provider: 'ollama',
-      model: 'qwen3:8b',
-      baseUrl: 'http://localhost:11434',
-    },
-    copilot: {
-      model: '',
-    },
-  },
-  routing: {
-    strategy: 'smart',
-    localToolLimit: 4,
-    cloudOnlyTools: ['browser', 'code_exec'],
-    escalationPatterns: [
-      'write a report', 'analyse this', 'analyze this',
-      'in detail', 'comprehensive', 'refactor', 'architect',
-    ],
-  },
-  memory: {
-    dbPath: './data/memory.db',
-    maxRecall: 10,
-  },
+  models: [],
+  defaultModel: '',
   transports: {
     tui: { enabled: true },
-    web: { enabled: false, port: 3000, host: '127.0.0.1' },
+    web: { enabled: true, port: 3033, host: '127.0.0.1' },
     telegram: { enabled: false },
-    discord: { enabled: false },
-  },
-  scheduler: {
-    enabled: false,
-    timezone: 'Europe/London',
-  },
-  tools: {
-    allow: ['*'],
-    deny: [],
-  },
-  updater: {
-    autoUpdate: false,
-    branch: 'main',
-    checkIntervalMs: 60 * 60 * 1000, // 1 hour
   },
 };
 
 /**
- * Flatten TOML's snake_case keys into camelCase and merge with defaults.
- * Keeps it simple — no deep validation library needed yet.
+ * Load and validate configuration from sigil.toml.
+ * Returns defaults merged with whatever the user has configured.
+ * Missing file is not an error — we return defaults (onboarding will create the file).
  */
-function snakeToCamel(str: string): string {
-  return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-}
-
-function camelizeKeys(obj: unknown): unknown {
-  if (Array.isArray(obj)) return obj.map(camelizeKeys);
-  if (obj !== null && typeof obj === 'object') {
-    return Object.fromEntries(
-      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [
-        snakeToCamel(k),
-        camelizeKeys(v),
-      ])
-    );
-  }
-  return obj;
-}
-
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] &&
-      typeof source[key] === 'object' &&
-      !Array.isArray(source[key]) &&
-      target[key] &&
-      typeof target[key] === 'object'
-    ) {
-      result[key] = deepMerge(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>);
-    } else {
-      result[key] = source[key];
-    }
-  }
-  return result;
-}
-
-export function loadConfig(configPath?: string): SigilConfig {
-  const path = configPath ?? resolve(process.cwd(), 'sigil.toml');
-
-  if (!existsSync(path)) {
-    console.warn(`No config found at ${path}, using defaults.`);
-    return DEFAULT_CONFIG;
+export function loadConfig(): SigilConfig {
+  if (!existsSync(CONFIG_PATH)) {
+    console.warn('[Config] No sigil.toml found — using defaults. Run onboarding to configure.');
+    return { ...DEFAULTS };
   }
 
-  const raw = readFileSync(path, 'utf-8');
-  const parsed = TOML.parse(raw);
-  const camelized = camelizeKeys(parsed) as Record<string, unknown>;
+  try {
+    const raw = readFileSync(CONFIG_PATH, 'utf-8');
+    const parsed = TOML.parse(raw) as Record<string, unknown>;
+    return mergeConfig(parsed);
+  } catch (err) {
+    console.error('[Config] Failed to parse sigil.toml:', err);
+    console.warn('[Config] Falling back to defaults.');
+    return { ...DEFAULTS };
+  }
+}
 
-  return deepMerge(DEFAULT_CONFIG as unknown as Record<string, unknown>, camelized) as unknown as SigilConfig;
+/**
+ * Merge parsed TOML into a typed config, applying defaults for missing fields.
+ * TOML snake_case keys are converted to camelCase where needed.
+ */
+function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
+  const identity = parsed.identity as Record<string, unknown> | undefined;
+  const transports = parsed.transports as Record<string, unknown> | undefined;
+  const web = transports?.web as Record<string, unknown> | undefined;
+  const telegram = transports?.telegram as Record<string, unknown> | undefined;
+
+  // Parse model pool from [[models]] array
+  const models = parseModels(parsed.models as Record<string, unknown>[] | undefined);
+
+  // Determine default model: explicit config, or first model in pool
+  const defaultModel =
+    (parsed.default_model as string) ??
+    (models.length > 0 ? models[0].name : '');
+
+  return {
+    version: (parsed.version as string) ?? DEFAULTS.version,
+    identity: {
+      name: (identity?.name as string) ?? DEFAULTS.identity.name,
+      personality: (identity?.personality as string) ?? DEFAULTS.identity.personality,
+    },
+    models,
+    defaultModel,
+    transports: {
+      tui: {
+        enabled: (transports?.tui as Record<string, unknown>)?.enabled !== false,
+      },
+      web: {
+        enabled: web?.enabled !== false,
+        port: (web?.port as number) ?? DEFAULTS.transports.web.port,
+        host: (web?.host as string) ?? DEFAULTS.transports.web.host,
+      },
+      telegram: {
+        enabled: (telegram?.enabled as boolean) ?? false,
+        botToken: (telegram?.bot_token as string) ?? undefined,
+        chatId: (telegram?.chat_id as string) ?? undefined,
+      },
+    },
+  };
+}
+
+/** Convert [[models]] TOML array into typed ModelConfig[] */
+function parseModels(raw: Record<string, unknown>[] | undefined): ModelConfig[] {
+  if (!raw || !Array.isArray(raw)) return [];
+
+  return raw.map((m) => ({
+    name: m.name as string,
+    provider: m.provider as string,
+    model: m.model as string,
+    tier: (m.tier as ModelConfig['tier']) ?? 'basic',
+    costPer1kInput: (m.cost_per_1k_input as number) ?? 0,
+    costPer1kOutput: (m.cost_per_1k_output as number) ?? 0,
+    useFor: (m.use_for as string[]) ?? [],
+    baseUrl: m.base_url as string | undefined,
+    apiKeyEnv: m.api_key_env as string | undefined,
+    maxTokens: m.max_tokens as number | undefined,
+    contextWindow: m.context_window as number | undefined,
+  }));
 }

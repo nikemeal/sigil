@@ -1,38 +1,31 @@
 {
   "name": "sigil",
-  "version": "0.1.0",
-  "description": "Personal AI agent — lean, self-hosted, yours.",
+  "version": "2.0.0",
+  "description": "Personal AI agent — runs on your hardware, works in the background, gets smarter over time",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "onboard": "tsx src/onboard.ts",
     "tui": "tsx src/transports/tui-client.ts",
-    "test": "vitest"
+    "onboard": "tsx src/onboard.ts",
+    "test": "tsx src/test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@fastify/websocket": "^11.0.0",
+    "@fastify/websocket": "^11.0.2",
     "@iarna/toml": "^2.2.5",
-    "better-sqlite3": "^11.7.0",
     "chalk": "^5.4.1",
-    "fastify": "^5.2.0",
-    "grammy": "^1.31.0",
-    "node-cron": "^3.0.3",
-    "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "fastify": "^5.2.1",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.0.0",
-    "@types/node-cron": "^3.0.11",
-    "@types/ws": "^8.5.13",
-    "tsx": "^4.19.0",
-    "typescript": "^5.9.3",
-    "vitest": "^3.0.0"
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
   }
 }

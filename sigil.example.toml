@@ -1,110 +1,55 @@
+# Sigil Configuration
+#
+# Copy this to sigil.toml and edit to your needs.
+# Or run: npm run onboard (sigil onboard)
+
+version = "2.0.0"
+
+# ── Identity ─────────────────────────────────────────────────────────
 [identity]
 name = "Sigil"
-personality = """
-You are Sigil, a versatile AI agent designed to assist with a wide range of tasks. 
-You can analyze complex information, generate creative content, and interact with 
-various tools to help users achieve their goals. Your primary objective is to provide 
-accurate, insightful, and helpful responses while maintaining a friendly and 
-approachable demeanor."""
+personality = "A helpful, direct personal AI agent. Concise but thorough."
 
-# ── LLM Configuration ──────────────────────────────────────────────
-# Cloud model — used for complex tasks, long context, multi-tool work
-[llm]
+# ── Model Pool ───────────────────────────────────────────────────────
+# Configure one or more models. The first model (or default_model) is used.
+# provider = "anthropic" or "openai-compatible"
+# tier = "minimal" | "basic" | "standard" | "full"
+
+# Example: Anthropic Claude
+[[models]]
+name = "claude"
 provider = "anthropic"
 model = "claude-sonnet-4-20250514"
+tier = "standard"
 api_key_env = "ANTHROPIC_API_KEY"
-max_tokens = 8192
-temperature = 0.7
+cost_per_1k_input = 0.003
+cost_per_1k_output = 0.015
+use_for = ["general"]
 
-# GitHub Copilot — use your Copilot subscription instead of an API key.
-# Set provider = "copilot" above, then configure the model below.
-# Run the onboarding wizard to authenticate via GitHub device flow.
-#
-# [llm.copilot]
-# model = "gpt-4o"          # or "claude-sonnet-4-20250514", "gemini-2.0-flash", etc.
+# Example: Local Ollama (uncomment to use)
+# [[models]]
+# name = "local"
+# provider = "openai-compatible"
+# base_url = "http://localhost:11434"
+# model = "qwen3:8b"
+# tier = "basic"
+# cost_per_1k_input = 0
+# cost_per_1k_output = 0
+# use_for = ["chat"]
 
-# Local model — used for simple chat, quick lookups, single-tool tasks
-# Runs via Ollama. If Ollama isn't running, Sigil falls back to cloud-only.
-[llm.local]
-provider = "ollama"
-model = ""
-base_url = "http://localhost:11434"
+# Which model to use by default (must match a [[models]] name)
+default_model = "claude"
 
-# ── Routing ─────────────────────────────────────────────────────────
-# How Sigil decides between local and cloud models.
-#
-# Strategies:
-#   "smart"       — Analyse each message and route intelligently (recommended)
-#   "local_first" — Always try local, fall back to cloud on failure
-#   "local_only"  — Never call cloud (fully offline / zero-cost mode)
-#   "cloud_only"  — Never use local (just Anthropic, like before)
-#   "cloud_first" — Always use cloud (ignore local)
-#
-[routing]
-strategy = "smart"
-local_tool_limit = 4                  # Max tools exposed to local model
-cloud_only_tools = ["browser", "code_exec"]  # Tools too complex for local
-escalation_patterns = [
-  "write a report",
-  "analyse this",
-  "analyze this",
-  "in detail",
-  "comprehensive",
-  "step by step",
-  "refactor",
-  "architect",
-  "design system",
-]
-
-# ── Memory ──────────────────────────────────────────────────────────
-[memory]
-db_path = "./data/memory.db"
-max_recall = 10
-
-# ── Transports ──────────────────────────────────────────────────────
+# ── Transports ───────────────────────────────────────────────────────
 [transports.tui]
 enabled = true
 
 [transports.web]
 enabled = true
-port = 3000
+port = 3033
 host = "127.0.0.1"
 
 [transports.telegram]
 enabled = false
-# token_env = "TELEGRAM_BOT_TOKEN"
-
-[transports.discord]
-enabled = false
-# token_env = "DISCORD_BOT_TOKEN"
-
-# ── Scheduler ───────────────────────────────────────────────────────
-[scheduler]
-enabled = false
-timezone = "Europe/London"
-
-# Example jobs (uncomment when scheduler is enabled):
-# [[jobs]]
-# id = "morning-brief"
-# cron = "0 8 * * 1-5"
-# prompt = "Give me a morning briefing: weather, calendar, reminders."
-# transport = "telegram"
-
-# ── Tools ───────────────────────────────────────────────────────────
-[tools]
-allow = ["*"]
-deny = []
-
-# ── Auto-Update ─────────────────────────────────────────────────
-# Sigil can check its git repo for updates and apply them automatically.
-#
-# auto_update = true:  pulls changes + restarts automatically (hands-off)
-# auto_update = false: notifies you when updates are available (you trigger it)
-#
-# Either way, you can always ask the agent "check for updates" or "update yourself",
-# or use `sigil update` from the CLI.
-#
-[updater]
-auto_update = false
-branch = "main"
-check_interval_ms = 3600000   # 1 hour (in milliseconds)
+# bot_token = "..."
+# chat_id = "..."

@@ -1,151 +1,118 @@
+/**
+ * Agent Core
+ *
+ * Single-turn message processing: takes a message, sends it to the LLM,
+ * returns a response. Module 1 keeps this simple — no tools, no multi-turn,
+ * no routing. Just message in, LLM call, response out.
+ *
+ * Future modules extend this:
+ *   - Module 2: conversation history and context assembly
+ *   - Module 4: tool calling loop (multi-round)
+ *   - Module 5: smart routing to different models
+ *   - Module 6: background task orchestration
+ */
+
 import { randomUUID } from 'node:crypto';
 import type {
-  Message, Response, Action, LLMProvider,
-  CompletionResponse, ToolCall,
-} from '../gateway/types.js';
-import { ContextEngine } from '../context/engine.js';
-import { ToolRegistry } from '../tools/registry.js';
-
-const MAX_TOOL_ROUNDS = 10;
-
-/**
- * Callback for sending interim messages during long-running work.
- * The agent calls this to push updates to the user while it's still
- * processing (e.g. "I'll check the InvokeAI API and generate that for you").
- */
-export type InterimNotify = (response: Response) => void;
+  Message,
+  Response,
+  LLMProvider,
+  LLMMessage,
+  SigilConfig,
+} from '../types.js';
+import { EventBus } from '../lib/event-bus.js';
 
 export class Agent {
-  private llm: LLMProvider;
-  private context: ContextEngine;
-  private tools: ToolRegistry;
-  private notify: InterimNotify | null = null;
+  private provider: LLMProvider;
+  private config: SigilConfig;
+  private bus: EventBus;
 
-  constructor(llm: LLMProvider, context: ContextEngine, tools: ToolRegistry) {
-    this.llm = llm;
-    this.context = context;
-    this.tools = tools;
+  constructor(provider: LLMProvider, config: SigilConfig, bus: EventBus) {
+    this.provider = provider;
+    this.config = config;
+    this.bus = bus;
   }
 
-  /** Register a callback for interim/async messages (wired up by index.ts) */
-  onNotify(fn: InterimNotify): void {
-    this.notify = fn;
-  }
-
+  /**
+   * Process a single message and return a response.
+   * This is the core loop — everything flows through here.
+   */
   async process(message: Message): Promise<Response> {
-    const startTime = Date.now();
-    const actions: Action[] = [];
+    this.bus.emit('message:processing', { messageId: message.id });
 
-    // 1. Assemble context
-    const ctx = await this.context.assemble(message);
+    try {
+      // Build the messages array for the LLM
+      const llmMessages = this.buildMessages(message);
 
-    // 2. Agentic loop — keep going until the model stops calling tools
-    let completion: CompletionResponse;
-    let round = 0;
-    let sentInterim = false;
+      // Determine which model to use (module 5 makes this smart)
+      const model = this.resolveModel();
 
-    // Build a running message history for tool results
-    const messages = [...ctx.messages];
-
-    while (round < MAX_TOOL_ROUNDS) {
-      round++;
-
-      completion = await this.llm.complete({
-        system: ctx.system,
-        messages,
-        tools: this.tools.getSchemas(),
+      // Call the LLM
+      const completion = await this.provider.complete({
+        messages: llmMessages,
+        model,
       });
 
-      // If no tool calls, we're done
-      if (!completion.toolCalls || completion.toolCalls.length === 0) {
-        break;
-      }
+      const response: Response = {
+        id: randomUUID(),
+        messageId: message.id,
+        content: completion.content,
+        model: completion.model,
+        timestamp: new Date(),
+        usage: completion.usage,
+      };
 
-      // ── Split response: send interim message to user ──
-      // If the LLM returned both text AND tool calls on the first round,
-      // the text is an acknowledgement ("I'll check the API..."). Send it
-      // to the user immediately so they're not left waiting in silence.
-      if (round === 1 && completion.content.trim() && this.notify) {
-        this.notify({
-          id: randomUUID(),
-          replyTo: message.id,
-          content: completion.content,
-          timestamp: new Date(),
-        });
-        sentInterim = true;
-        console.log(`[agent] Sent interim response, continuing tool work...`);
-      }
+      this.bus.emit('message:complete', response);
+      this.bus.emit('broadcast:response', response);
 
-      // Execute each tool call
-      const toolResultParts: string[] = [];
+      return response;
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.bus.emit('message:error', { messageId: message.id, error });
+      throw err;
+    }
+  }
 
-      for (const tc of completion.toolCalls) {
-        const toolStart = Date.now();
-        // Inject message context so task tools know where to reply
-        const enrichedInput = {
-          ...tc.input,
-          _replyTransport: message.source,
-          _replyThreadId: message.threadId ?? message.source,
-        };
-        const result = await this.tools.execute(tc.name, enrichedInput);
-        const duration = Date.now() - toolStart;
+  /**
+   * Build the LLM message array for a request.
+   * Module 1: just system prompt + user message.
+   * Module 2 adds: memories, compressed history, living profile.
+   */
+  private buildMessages(message: Message): LLMMessage[] {
+    const messages: LLMMessage[] = [];
 
-        actions.push({
-          tool: tc.name,
-          input: tc.input,
-          output: result.content.slice(0, 500), // truncate for response
-          durationMs: duration,
-        });
+    // System prompt with agent identity
+    const systemParts: string[] = [
+      `You are ${this.config.identity.name}.`,
+      this.config.identity.personality,
+    ];
 
-        toolResultParts.push(
-          `[Tool: ${tc.name}]\n${result.isError ? 'ERROR: ' : ''}${result.content}`
-        );
-      }
+    messages.push({
+      role: 'system',
+      content: systemParts.join('\n\n'),
+    });
 
-      // Add assistant message (with tool calls) and tool results to history
-      // For simplicity, we serialize tool interactions as text messages
-      const assistantMsg = [
-        completion.content,
-        ...completion.toolCalls.map(
-          tc => `[Calling tool: ${tc.name}(${JSON.stringify(tc.input)})]`
-        ),
-      ]
-        .filter(Boolean)
-        .join('\n');
+    // User message
+    messages.push({
+      role: 'user',
+      content: message.content,
+    });
 
-      messages.push({ role: 'assistant', content: assistantMsg });
-      messages.push({ role: 'user', content: `Tool results:\n${toolResultParts.join('\n\n')}` });
+    return messages;
+  }
+
+  /** Resolve which model to use. Module 1: just the default. */
+  private resolveModel(): string {
+    // Find the default model config
+    const modelConfig = this.config.models.find(
+      (m) => m.name === this.config.defaultModel
+    );
+
+    if (!modelConfig) {
+      // Fallback: use the first model, or the raw default name
+      return this.config.models[0]?.model ?? this.config.defaultModel;
     }
 
-    // 3. Store the response
-    const threadId = message.threadId ?? message.source;
-    this.context.storeResponse(threadId, completion!.content);
-
-    // 4. Log usage
-    if (completion!.usage) {
-      const { inputTokens, outputTokens } = completion!.usage;
-      const totalMs = Date.now() - startTime;
-      console.log(
-        `[agent] ${inputTokens} in / ${outputTokens} out / ${round} round(s) / ${totalMs}ms / ${actions.length} tool call(s)`
-      );
-    }
-
-    const finalResponse: Response = {
-      id: randomUUID(),
-      replyTo: message.id,
-      content: completion!.content,
-      actions: actions.length > 0 ? actions : undefined,
-      timestamp: new Date(),
-    };
-
-    // 5. If we sent an interim message, also broadcast the final result.
-    //    The caller (transport) will get the return value too, but the
-    //    interim was already sent via notify — so we flag it so the
-    //    transport can decide whether to show the final response or not.
-    if (sentInterim) {
-      finalResponse.metadata = { ...finalResponse.metadata, hadInterim: true };
-    }
-
-    return finalResponse;
+    return modelConfig.model;
   }
 }

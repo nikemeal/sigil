@@ -2,21 +2,20 @@
 node_modules/
 dist/
 
+# Agent-owned overrides (unique per installation, never committed)
+local/
+
 # Data & databases
 data/
 *.db
 *.db-wal
 *.db-shm
 
-# Config (contains personal data & API key references)
+# Config (contains API keys and personal settings)
 sigil.toml
 sigil.toml.backup-*
 .env
 .env.*
-
-# User-generated skills & self-extended tools (but keep examples)
-skills/*
-!skills/examples/
 
 # OS
 .DS_Store
