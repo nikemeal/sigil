@@ -3,7 +3,9 @@
 Tracks improvements and ideas across sessions. See PLAN.md for the full module roadmap.
 
 ## Onboarding
-- [ ] Fetch models from Anthropic API when they add a models endpoint
+- [x] Fetch models from OpenAI-compatible providers (Ollama, etc.)
+- [ ] Fetch models from Anthropic API (they have /v1/models now)
+- [ ] Fetch models from OpenAI API (uses same /v1/models, just needs auth)
 - [ ] Validate API key works before writing config (make a test call)
 - [ ] Section-by-section re-configuration (e.g. `sigil onboard --provider`)
 
