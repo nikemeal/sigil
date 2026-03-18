@@ -88,6 +88,7 @@ rsync -a --exclude=node_modules --exclude=.git --exclude=data --exclude=local \
 # Create directories the agent needs
 mkdir -p "${INSTALL_DIR}/data"
 mkdir -p "${INSTALL_DIR}/local"
+mkdir -p "${INSTALL_DIR}/skills"
 
 # Install dependencies (including devDependencies for TypeScript build)
 echo "Installing dependencies..."
