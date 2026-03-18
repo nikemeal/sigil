@@ -40,6 +40,17 @@ use_for = ["general"]
 # Which model to use by default (must match a [[models]] name)
 default_model = "claude"
 
+# ── Memory ───────────────────────────────────────────────────────────
+[memory]
+db_path = "data/sigil.db"
+max_recall_results = 5
+
+# Vector embeddings (optional — enhances memory recall with semantic search)
+# Without this, memory uses keyword search (FTS5) which works well on its own.
+# embedding_model = "nomic-embed-text"                # Ollama
+# embedding_model = "text-embedding-3-small"          # OpenAI
+# embedding_provider = "http://localhost:11434"        # base URL for embedding API
+
 # ── Transports ───────────────────────────────────────────────────────
 [transports.tui]
 enabled = true

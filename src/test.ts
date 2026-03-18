@@ -86,6 +86,7 @@ async function run(): Promise<void> {
         identity: { name: 'test', personality: 'test' },
         models: [],
         defaultModel: '',
+        memory: { dbPath: 'data/sigil.db', maxRecallResults: 5 },
         transports: {
           tui: { enabled: false },
           web: { enabled: false, port: 3033, host: '127.0.0.1' },
@@ -125,6 +126,7 @@ async function run(): Promise<void> {
       identity: { name: 'test', personality: 'test' },
       models: [],
       defaultModel: '',
+      memory: { dbPath: 'data/sigil.db', maxRecallResults: 5 },
       transports: {
         tui: { enabled: false },
         web: { enabled: true, port: 13033, host: '127.0.0.1' },

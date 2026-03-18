@@ -106,6 +106,17 @@ export interface IdentityConfig {
   personality: string;
 }
 
+export interface MemoryConfig {
+  /** SQLite database path, relative to project root */
+  dbPath: string;
+  /** Maximum number of recall results per query */
+  maxRecallResults: number;
+  /** Embedding model name (e.g. 'nomic-embed-text', 'text-embedding-3-small') */
+  embeddingModel?: string;
+  /** Which provider to use for embeddings — references a [[models]] name or base_url */
+  embeddingProvider?: string;
+}
+
 export interface TransportsConfig {
   tui: { enabled: boolean };
   web: { enabled: boolean; port: number; host: string };
@@ -117,6 +128,7 @@ export interface SigilConfig {
   identity: IdentityConfig;
   models: ModelConfig[];
   defaultModel: string;
+  memory: MemoryConfig;
   transports: TransportsConfig;
 }
 

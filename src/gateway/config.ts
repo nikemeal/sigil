@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as TOML from '@iarna/toml';
-import type { SigilConfig, ModelConfig } from '../types.js';
+import type { SigilConfig, ModelConfig, MemoryConfig } from '../types.js';
 
 /** Where we look for config, relative to project root */
 const CONFIG_PATH = resolve(process.cwd(), 'sigil.toml');
@@ -25,6 +25,10 @@ const DEFAULTS: SigilConfig = {
   },
   models: [],
   defaultModel: '',
+  memory: {
+    dbPath: 'data/sigil.db',
+    maxRecallResults: 5,
+  },
   transports: {
     tui: { enabled: true },
     web: { enabled: true, port: 3033, host: '127.0.0.1' },
@@ -60,6 +64,7 @@ export function loadConfig(): SigilConfig {
  */
 function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
   const identity = parsed.identity as Record<string, unknown> | undefined;
+  const memory = parsed.memory as Record<string, unknown> | undefined;
   const transports = parsed.transports as Record<string, unknown> | undefined;
   const web = transports?.web as Record<string, unknown> | undefined;
   const telegram = transports?.telegram as Record<string, unknown> | undefined;
@@ -80,6 +85,12 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
     },
     models,
     defaultModel,
+    memory: {
+      dbPath: (memory?.db_path as string) ?? DEFAULTS.memory.dbPath,
+      maxRecallResults: (memory?.max_recall_results as number) ?? DEFAULTS.memory.maxRecallResults,
+      embeddingModel: (memory?.embedding_model as string) ?? undefined,
+      embeddingProvider: (memory?.embedding_provider as string) ?? undefined,
+    },
     transports: {
       tui: {
         enabled: (transports?.tui as Record<string, unknown>)?.enabled !== false,
