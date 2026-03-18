@@ -85,8 +85,9 @@ export class TelegramTransport {
     });
 
     // Handle all text messages
-    this.bot.on('message:text', async (ctx) => {
+    this.bot.on('message:text', async (ctx: Context) => {
       if (!this.isAllowed(ctx)) return;
+      if (!ctx.chat || !ctx.message?.text) return;
 
       const chatId = String(ctx.chat.id);
       this.activeChatIds.add(chatId);
