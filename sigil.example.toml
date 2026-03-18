@@ -62,5 +62,5 @@ host = "127.0.0.1"
 
 [transports.telegram]
 enabled = false
-# bot_token = "..."
-# chat_id = "..."
+# bot_token_env = "TELEGRAM_BOT_TOKEN"    # env var containing bot token
+# allowed_chat_ids = ["123456789"]         # restrict to these chat IDs

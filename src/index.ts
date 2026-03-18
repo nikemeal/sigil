@@ -21,6 +21,7 @@ import { ConversationStore } from './context/conversation.js';
 import { Profile } from './context/profile.js';
 import { ContextEngine } from './context/engine.js';
 import { createEmbeddingProvider } from './context/embeddings.js';
+import { TelegramTransport } from './transports/telegram.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -68,6 +69,20 @@ async function main(): Promise<void> {
   const wsServer = new WSServer(bus, gateway, config);
   await wsServer.start();
 
+  // Start Telegram bot if configured
+  let telegramTransport: TelegramTransport | null = null;
+  if (config.transports.telegram.enabled) {
+    const botTokenEnv = config.transports.telegram.botTokenEnv ?? 'TELEGRAM_BOT_TOKEN';
+    const botToken = process.env[botTokenEnv];
+
+    if (botToken) {
+      telegramTransport = new TelegramTransport(bus, gateway, config, botToken);
+      await telegramTransport.start();
+    } else {
+      console.warn(`[Sigil] Telegram enabled but ${botTokenEnv} not set in environment.`);
+    }
+  }
+
   // Signal that the system is ready
   bus.emit('system:ready', { timestamp: new Date() });
   console.log('[Sigil] Ready.');
@@ -76,6 +91,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`\n[Sigil] Received ${signal}, shutting down...`);
     bus.emit('system:shutdown', { reason: signal });
+    if (telegramTransport) await telegramTransport.stop();
     await wsServer.stop();
     closeDatabase();
     process.exit(0);

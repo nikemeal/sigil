@@ -120,7 +120,11 @@ export interface MemoryConfig {
 export interface TransportsConfig {
   tui: { enabled: boolean };
   web: { enabled: boolean; port: number; host: string };
-  telegram: { enabled: boolean; botToken?: string; chatId?: string };
+  telegram: {
+    enabled: boolean;
+    botTokenEnv?: string;
+    allowedChatIds?: string[];
+  };
 }
 
 export interface SigilConfig {

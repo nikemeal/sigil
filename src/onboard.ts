@@ -196,6 +196,11 @@ interface OnboardState {
     embeddingModel?: string;
     embeddingProvider?: string;
   };
+  telegram: {
+    enabled: boolean;
+    botTokenEnv?: string;
+    allowedChatIds?: string[];
+  };
   envLines: string[];
 }
 
@@ -209,6 +214,8 @@ function loadExistingState(): OnboardState | null {
     const identity = parsed.identity as Record<string, unknown> | undefined;
     const models = parsed.models as Record<string, unknown>[] | undefined;
     const memory = parsed.memory as Record<string, unknown> | undefined;
+    const transports = parsed.transports as Record<string, unknown> | undefined;
+    const telegram = transports?.telegram as Record<string, unknown> | undefined;
     const m = models?.[0];
 
     if (!m) return null;
@@ -234,6 +241,11 @@ function loadExistingState(): OnboardState | null {
       memory: {
         embeddingModel: memory?.embedding_model as string | undefined,
         embeddingProvider: memory?.embedding_provider as string | undefined,
+      },
+      telegram: {
+        enabled: (telegram?.enabled as boolean) ?? false,
+        botTokenEnv: telegram?.bot_token_env as string | undefined,
+        allowedChatIds: telegram?.allowed_chat_ids as string[] | undefined,
       },
       envLines: [],
     };
@@ -390,6 +402,43 @@ async function setupMemory(state: OnboardState): Promise<void> {
   }
 }
 
+async function setupTransports(state: OnboardState): Promise<void> {
+  console.log();
+  console.log(chalk.bold('Transports'));
+
+  // Telegram
+  const enableTelegram = await ask(
+    'Enable Telegram?',
+    state.telegram.enabled ? 'y' : 'n',
+  );
+
+  if (enableTelegram.toLowerCase() === 'y') {
+    state.telegram.enabled = true;
+
+    const botToken = await ask('Telegram bot token');
+    state.telegram.botTokenEnv = 'TELEGRAM_BOT_TOKEN';
+    state.envLines.push(`TELEGRAM_BOT_TOKEN=${botToken}`);
+
+    const restrict = await ask('Restrict bot to specific users?', 'y');
+
+    if (restrict.toLowerCase() === 'y') {
+      console.log(chalk.dim('\n  Enter Telegram chat IDs (comma-separated).'));
+      console.log(chalk.dim('  To find your chat ID: send a message to the bot, then check sigil logs.\n'));
+      const chatIds = await ask('Allowed chat IDs');
+      const ids = chatIds.split(',').map((id) => id.trim()).filter(Boolean);
+      state.telegram.allowedChatIds = ids.length > 0 ? ids : undefined;
+    } else {
+      state.telegram.allowedChatIds = undefined;
+      console.log(chalk.yellow('\n  Warning: bot will respond to anyone who messages it.'));
+      console.log(chalk.dim('  You can add restrictions later via sigil onboard.\n'));
+    }
+  } else {
+    state.telegram.enabled = false;
+    state.telegram.botTokenEnv = undefined;
+    state.telegram.allowedChatIds = undefined;
+  }
+}
+
 // ── Config generation ─────────────────────────────────────────────────
 
 function generateToml(state: OnboardState): string {
@@ -438,7 +487,7 @@ port = 3033
 host = "127.0.0.1"
 
 [transports.telegram]
-enabled = false
+enabled = ${state.telegram.enabled}${state.telegram.botTokenEnv ? `\nbot_token_env = "${state.telegram.botTokenEnv}"` : ''}${state.telegram.allowedChatIds && state.telegram.allowedChatIds.length > 0 ? `\nallowed_chat_ids = [${state.telegram.allowedChatIds.map((id) => `"${id}"`).join(', ')}]` : ''}
 `;
 }
 
@@ -475,6 +524,7 @@ async function main(): Promise<void> {
       'Identity (name, personality)',
       'LLM Provider',
       'Memory & Embeddings',
+      'Transports (Telegram)',
     ]);
 
     const state = existing;
@@ -492,6 +542,9 @@ async function main(): Promise<void> {
     if (sections.some((s) => s.startsWith('Memory'))) {
       await setupMemory(state);
     }
+    if (sections.some((s) => s.startsWith('Transports'))) {
+      await setupTransports(state);
+    }
 
     writeConfig(state);
 
@@ -506,12 +559,14 @@ async function main(): Promise<void> {
         tier: 'basic', costIn: 0, costOut: 0,
       },
       memory: {},
+      telegram: { enabled: false },
       envLines: [],
     };
 
     await setupIdentity(state);
     await setupProvider(state);
     await setupMemory(state);
+    await setupTransports(state);
     writeConfig(state);
   }
 

@@ -32,7 +32,7 @@ const DEFAULTS: SigilConfig = {
   transports: {
     tui: { enabled: true },
     web: { enabled: true, port: 3033, host: '127.0.0.1' },
-    telegram: { enabled: false },
+    telegram: { enabled: false, botTokenEnv: undefined, allowedChatIds: undefined },
   },
 };
 
@@ -102,11 +102,21 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
       },
       telegram: {
         enabled: (telegram?.enabled as boolean) ?? false,
-        botToken: (telegram?.bot_token as string) ?? undefined,
-        chatId: (telegram?.chat_id as string) ?? undefined,
+        botTokenEnv: (telegram?.bot_token_env as string) ?? undefined,
+        allowedChatIds: parseChatIds(telegram?.allowed_chat_ids),
       },
     },
   };
+}
+
+/** Parse allowed_chat_ids — could be array of strings or numbers in TOML */
+function parseChatIds(raw: unknown): string[] | undefined {
+  if (!raw) return undefined;
+  if (Array.isArray(raw)) {
+    const ids = raw.map((id) => String(id)).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  }
+  return undefined;
 }
 
 /** Convert [[models]] TOML array into typed ModelConfig[] */
