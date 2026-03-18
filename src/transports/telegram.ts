@@ -86,10 +86,13 @@ export class TelegramTransport {
 
     // Handle all text messages
     this.bot.on('message:text', async (ctx: Context) => {
-      if (!this.isAllowed(ctx)) return;
       if (!ctx.chat || !ctx.message?.text) return;
 
       const chatId = String(ctx.chat.id);
+      console.log(`[Telegram] Message from chat ${chatId}: ${ctx.message.text.slice(0, 50)}${ctx.message.text.length > 50 ? '...' : ''}`);
+
+      if (!this.isAllowed(ctx)) return;
+
       this.activeChatIds.add(chatId);
 
       // Send to gateway for processing
