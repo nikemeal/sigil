@@ -1,12 +1,11 @@
 /**
  * Agent Core
  *
- * Single-turn message processing: takes a message, sends it to the LLM,
- * returns a response. Module 1 keeps this simple — no tools, no multi-turn,
- * no routing. Just message in, LLM call, response out.
+ * Message processing: takes a message, builds context (with conversation
+ * history, memories, profile), sends to LLM, records the exchange,
+ * and returns a response.
  *
  * Future modules extend this:
- *   - Module 2: conversation history and context assembly
  *   - Module 4: tool calling loop (multi-round)
  *   - Module 5: smart routing to different models
  *   - Module 6: background task orchestration
@@ -17,15 +16,16 @@ import type {
   Message,
   Response,
   LLMProvider,
-  LLMMessage,
   SigilConfig,
 } from '../types.js';
 import { EventBus } from '../lib/event-bus.js';
+import { ContextEngine } from '../context/engine.js';
 
 export class Agent {
   private provider: LLMProvider;
   private config: SigilConfig;
   private bus: EventBus;
+  private context: ContextEngine | null = null;
 
   constructor(provider: LLMProvider, config: SigilConfig, bus: EventBus) {
     this.provider = provider;
@@ -33,18 +33,28 @@ export class Agent {
     this.bus = bus;
   }
 
+  /** Attach the context engine (called after DB is initialised) */
+  setContext(context: ContextEngine): void {
+    this.context = context;
+  }
+
   /**
    * Process a single message and return a response.
    * This is the core loop — everything flows through here.
    */
   async process(message: Message): Promise<Response> {
-    this.bus.emit('message:processing', { messageId: message.id });
-
     try {
-      // Build the messages array for the LLM
-      const llmMessages = this.buildMessages(message);
+      // Build context: system prompt + memories + history + current message
+      const llmMessages = this.context
+        ? await this.context.buildContext(message)
+        : this.buildFallbackMessages(message);
 
-      // Determine which model to use (module 5 makes this smart)
+      // Record the user message in conversation history
+      if (this.context) {
+        this.context.recordMessage(message.id, 'user', message.content, message.source);
+      }
+
+      // Determine which model to use
       const model = this.resolveModel();
 
       // Call the LLM
@@ -62,6 +72,11 @@ export class Agent {
         usage: completion.usage,
       };
 
+      // Record the assistant response in conversation history
+      if (this.context) {
+        this.context.recordMessage(response.id, 'assistant', completion.content);
+      }
+
       this.bus.emit('message:complete', response);
       this.bus.emit('broadcast:response', response);
 
@@ -73,46 +88,36 @@ export class Agent {
     }
   }
 
-  /**
-   * Build the LLM message array for a request.
-   * Module 1: just system prompt + user message.
-   * Module 2 adds: memories, compressed history, living profile.
-   */
-  private buildMessages(message: Message): LLMMessage[] {
-    const messages: LLMMessage[] = [];
-
-    // System prompt with agent identity
-    const systemParts: string[] = [
-      `You are ${this.config.identity.name}.`,
-      this.config.identity.personality,
-    ];
-
-    messages.push({
-      role: 'system',
-      content: systemParts.join('\n\n'),
-    });
-
-    // User message
-    messages.push({
-      role: 'user',
-      content: message.content,
-    });
-
-    return messages;
+  /** Get the context engine (for tools that need memory access) */
+  getContext(): ContextEngine | null {
+    return this.context;
   }
 
-  /** Resolve which model to use. Module 1: just the default. */
+  /**
+   * Fallback message building when no context engine is attached.
+   * Just identity + current message — same as Module 1.
+   */
+  private buildFallbackMessages(message: Message) {
+    return [
+      {
+        role: 'system' as const,
+        content: `You are ${this.config.identity.name}.\n\n${this.config.identity.personality}`,
+      },
+      {
+        role: 'user' as const,
+        content: message.content,
+      },
+    ];
+  }
+
+  /** Resolve which model to use. */
   private resolveModel(): string {
-    // Find the default model config
     const modelConfig = this.config.models.find(
       (m) => m.name === this.config.defaultModel
     );
-
     if (!modelConfig) {
-      // Fallback: use the first model, or the raw default name
       return this.config.models[0]?.model ?? this.config.defaultModel;
     }
-
     return modelConfig.model;
   }
 }
