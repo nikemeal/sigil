@@ -3,6 +3,7 @@
  *
  * One command to go from zero to running:
  *   - Collects agent name, personality, LLM provider, API key
+ *   - Fetches available models from provider when possible
  *   - Writes sigil.toml and .env
  *   - Builds the project
  *   - Starts the service (systemd if provisioned, direct if dev)
@@ -79,6 +80,75 @@ function hasSystemd(): boolean {
   }
 }
 
+/**
+ * Fetch available models from an OpenAI-compatible API.
+ * Returns model IDs sorted alphabetically, or null if the endpoint is unreachable.
+ */
+async function fetchModels(baseUrl: string, apiKey?: string): Promise<string[] | null> {
+  const url = `${baseUrl.replace(/\/+$/, '')}/v1/models`;
+
+  try {
+    const response = await fetch(url, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as { data?: Array<{ id: string }> };
+    if (!data.data || !Array.isArray(data.data)) return null;
+
+    return data.data
+      .map((m) => m.id)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Let the user pick a model from a list, or type one manually.
+ * Falls back to text input if the model list can't be fetched.
+ */
+async function selectModel(baseUrl: string, apiKey?: string, defaultModel?: string): Promise<string> {
+  console.log(chalk.dim('\n  Fetching available models...'));
+  const models = await fetchModels(baseUrl, apiKey);
+
+  if (!models || models.length === 0) {
+    console.log(chalk.dim('  Could not fetch models. Enter manually.'));
+    return await ask('Model', defaultModel);
+  }
+
+  console.log(chalk.green(`  Found ${models.length} models.\n`));
+
+  // Show numbered list
+  const pageSize = 20;
+  if (models.length <= pageSize) {
+    models.forEach((m, i) => {
+      console.log(`  ${chalk.cyan(`${i + 1}.`)} ${m}`);
+    });
+  } else {
+    // Show first page and indicate there are more
+    models.slice(0, pageSize).forEach((m, i) => {
+      console.log(`  ${chalk.cyan(`${i + 1}.`)} ${m}`);
+    });
+    console.log(chalk.dim(`  ... and ${models.length - pageSize} more`));
+    console.log(chalk.dim(`  Type a number to select, or type a model name directly.`));
+  }
+
+  const answer = await ask('\nSelect model (number or name)', defaultModel);
+
+  // If they typed a number, resolve it
+  const idx = parseInt(answer, 10) - 1;
+  if (!isNaN(idx) && idx >= 0 && idx < models.length) {
+    console.log(chalk.green(`  Selected: ${models[idx]}`));
+    return models[idx];
+  }
+
+  // Otherwise use what they typed (could be a model name or the default)
+  return answer;
+}
+
 async function main(): Promise<void> {
   console.log(chalk.bold('\n  Sigil Setup\n'));
   console.log(chalk.dim('  One command to configure, build, and start your agent.\n'));
@@ -113,6 +183,7 @@ async function main(): Promise<void> {
 
   if (providerChoice.startsWith('Anthropic')) {
     const apiKey = await ask('Anthropic API key');
+    // TODO: fetch models from Anthropic when they add a models endpoint
     const model = await ask('Model', 'claude-sonnet-4-20250514');
     modelName = 'claude';
 
@@ -130,7 +201,7 @@ use_for = ["general"]
 `;
   } else if (providerChoice === 'OpenAI') {
     const apiKey = await ask('OpenAI API key');
-    const model = await ask('Model', 'gpt-4o');
+    const model = await selectModel('https://api.openai.com', apiKey, 'gpt-4o');
     modelName = 'openai';
 
     envLines.push(`OPENAI_API_KEY=${apiKey}`);
@@ -148,16 +219,18 @@ use_for = ["general"]
 `;
   } else {
     const baseUrl = await ask('API base URL', 'http://localhost:11434');
-    const model = await ask('Model', 'qwen3:8b');
     modelName = 'local';
-    const needsKey = await ask('Requires API key? (y/n)', 'n');
 
+    const needsKey = await ask('Requires API key? (y/n)', 'n');
+    let apiKey: string | undefined;
     let apiKeyLine = '';
     if (needsKey.toLowerCase() === 'y') {
-      const apiKey = await ask('API key');
+      apiKey = await ask('API key');
       envLines.push(`LLM_API_KEY=${apiKey}`);
       apiKeyLine = '\napi_key_env = "LLM_API_KEY"';
     }
+
+    const model = await selectModel(baseUrl, apiKey, 'qwen3:8b');
 
     modelToml = `
 [[models]]
