@@ -128,6 +128,7 @@ export interface SigilConfig {
 export interface EventMap {
   // Message lifecycle
   'message:received': Message;
+  'message:queued': { messageId: string; position: number };
   'message:processing': { messageId: string };
   'message:complete': Response;
   'message:error': { messageId: string; error: string };

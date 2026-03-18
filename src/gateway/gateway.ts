@@ -9,10 +9,9 @@
  *   - Module 2 adds conversation history — order must be preserved
  *   - Transports get predictable, in-order responses
  *
- * All communication goes through events:
- *   - Transport sends message → gateway queues it
- *   - Gateway processes queue one at a time via the agent
- *   - Agent emits 'broadcast:response' → all transports receive it
+ * Queue status is broadcast so transports can show feedback:
+ *   - message:queued — message is waiting (position in queue)
+ *   - message:processing — message is now being handled by the LLM
  */
 
 import { randomUUID } from 'node:crypto';
@@ -45,8 +44,16 @@ export class Gateway {
 
     this.bus.emit('message:received', message);
     this.queue.push(message);
-    this.processQueue();
 
+    // If already processing, this message is queued behind others
+    if (this.processing) {
+      this.bus.emit('message:queued', {
+        messageId: message.id,
+        position: this.queue.length,
+      });
+    }
+
+    this.processQueue();
     return message;
   }
 
@@ -66,6 +73,8 @@ export class Gateway {
 
     while (this.queue.length > 0) {
       const message = this.queue.shift()!;
+
+      this.bus.emit('message:processing', { messageId: message.id });
 
       try {
         await this.agent.process(message);

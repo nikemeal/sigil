@@ -26,11 +26,13 @@ interface ClientMessage {
 
 /** Messages from server to client */
 interface ServerMessage {
-  type: 'response' | 'notification' | 'error';
+  type: 'response' | 'notification' | 'error' | 'status';
   content: string;
   model?: string;
   messageId?: string;
   severity?: string;
+  status?: 'queued' | 'processing';
+  position?: number;
 }
 
 export class WSServer {
@@ -103,6 +105,25 @@ export class WSServer {
         type: 'notification',
         content: notification.content,
         severity: notification.severity,
+      });
+    });
+
+    this.bus.on('message:queued', (data) => {
+      this.broadcast({
+        type: 'status',
+        content: '',
+        messageId: data.messageId,
+        status: 'queued',
+        position: data.position,
+      });
+    });
+
+    this.bus.on('message:processing', (data) => {
+      this.broadcast({
+        type: 'status',
+        content: '',
+        messageId: data.messageId,
+        status: 'processing',
       });
     });
 
