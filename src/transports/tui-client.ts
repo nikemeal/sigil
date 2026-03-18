@@ -25,17 +25,46 @@ interface ServerMessage {
 // Config — in module 1 this is hardcoded, later reads from sigil.toml
 const WS_URL = process.env.SIGIL_WS_URL ?? 'ws://127.0.0.1:3033/ws';
 
+// Thinking indicator frames
+const SPINNER = ['   thinking', '.  thinking', '.. thinking', '...thinking'];
+
 function main(): void {
   console.log(chalk.dim(`Connecting to ${WS_URL}...`));
 
   const ws = new WebSocket(WS_URL);
   let connected = false;
+  let waiting = false;
+  let spinnerInterval: ReturnType<typeof setInterval> | null = null;
+  let spinnerFrame = 0;
 
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: chalk.cyan('you > '),
   });
+
+  /** Show a thinking indicator on the current line */
+  function startThinking(): void {
+    waiting = true;
+    spinnerFrame = 0;
+    process.stdout.write(chalk.dim(SPINNER[0]));
+    spinnerInterval = setInterval(() => {
+      spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
+      // Move to start of line, clear it, write new frame
+      process.stdout.write(`\r\x1b[K${chalk.dim(SPINNER[spinnerFrame])}`);
+    }, 400);
+  }
+
+  /** Clear the thinking indicator */
+  function stopThinking(): void {
+    waiting = false;
+    if (spinnerInterval) {
+      clearInterval(spinnerInterval);
+      spinnerInterval = null;
+    }
+    // Clear the thinking line
+    process.stdout.write('\r\x1b[K');
+  }
 
   ws.on('open', () => {
     connected = true;
@@ -48,8 +77,7 @@ function main(): void {
     try {
       const data = JSON.parse(raw.toString()) as ServerMessage;
 
-      // Clear the current prompt line before printing
-      process.stdout.write('\r\x1b[K');
+      stopThinking();
 
       switch (data.type) {
         case 'response':
@@ -80,6 +108,7 @@ function main(): void {
   });
 
   ws.on('close', () => {
+    stopThinking();
     if (connected) {
       console.log(chalk.yellow('\nDisconnected from Sigil.'));
     } else {
@@ -90,6 +119,7 @@ function main(): void {
   });
 
   ws.on('error', (err) => {
+    stopThinking();
     if (!connected) {
       console.log(chalk.red('Could not connect to Sigil. Is the service running?'));
       console.log(chalk.dim(`Error: ${err.message}`));
@@ -124,15 +154,15 @@ function main(): void {
     // Send message to server
     if (connected && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'message', content: input }));
-      console.log(); // blank line after sending
+      startThinking();
     } else {
       console.log(chalk.red('Not connected to Sigil.'));
+      rl.prompt();
     }
-
-    rl.prompt();
   });
 
   rl.on('close', () => {
+    stopThinking();
     ws.close();
     process.exit(0);
   });
