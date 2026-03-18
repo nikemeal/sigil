@@ -187,7 +187,7 @@ case "${1:-help}" in
     sudo ${EDITOR:-nano} "${INSTALL_DIR}/.env"
     ;;
   build)
-    cd "${INSTALL_DIR}" && npx tsc
+    cd "${INSTALL_DIR}" && npm install && npx tsc
     echo "Build complete."
     ;;
   test)

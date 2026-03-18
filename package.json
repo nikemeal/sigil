@@ -7,7 +7,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm install && tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "tui": "tsx src/transports/tui-client.ts",
