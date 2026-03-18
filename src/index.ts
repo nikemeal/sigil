@@ -22,6 +22,10 @@ import { Profile } from './context/profile.js';
 import { ContextEngine } from './context/engine.js';
 import { createEmbeddingProvider } from './context/embeddings.js';
 import { TelegramTransport } from './transports/telegram.js';
+import { ToolRegistry } from './tools/registry.js';
+import { shellExecTool } from './tools/shell.js';
+import { fileReadTool, fileWriteTool, listDirTool } from './tools/file-ops.js';
+import { createMemoryTools } from './tools/memory-tools.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -58,9 +62,20 @@ async function main(): Promise<void> {
   const provider = createProvider(config);
   console.log(`[Sigil] LLM provider: ${provider.name} (${config.defaultModel})`);
 
-  // Create agent and attach context
+  // Create tool registry and register built-in tools
+  const tools = new ToolRegistry(bus);
+  tools.register(shellExecTool);
+  tools.register(fileReadTool);
+  tools.register(fileWriteTool);
+  tools.register(listDirTool);
+  for (const tool of createMemoryTools(context)) {
+    tools.register(tool);
+  }
+
+  // Create agent and attach context + tools
   const agent = new Agent(provider, config, bus);
   agent.setContext(context);
+  agent.setTools(tools);
 
   // Create gateway — routes messages between transports and agent
   const gateway = new Gateway(bus, agent);

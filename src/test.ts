@@ -352,6 +352,244 @@ async function run(): Promise<void> {
     db.close();
   });
 
+  // ── Module 4: Tools ────────────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 4: Tools'));
+
+  await test('Tool registry: register and list', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+
+    registry.register({
+      name: 'test_tool',
+      description: 'A test tool',
+      parameters: { type: 'object', properties: {}, required: [] },
+      approval: 'auto',
+      execute: async () => 'result',
+    });
+
+    const tools = registry.list();
+    if (!tools.includes('test_tool')) throw new Error('Tool not registered');
+  });
+
+  await test('Tool registry: get definitions excludes denied tools', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+
+    registry.register({
+      name: 'allowed_tool',
+      description: 'Allowed',
+      parameters: { type: 'object', properties: {}, required: [] },
+      approval: 'auto',
+      execute: async () => 'ok',
+    });
+    registry.register({
+      name: 'denied_tool',
+      description: 'Denied',
+      parameters: { type: 'object', properties: {}, required: [] },
+      approval: 'deny',
+      execute: async () => 'ok',
+    });
+
+    const defs = registry.getDefinitions();
+    if (defs.length !== 1) throw new Error(`Expected 1 definition, got ${defs.length}`);
+    if (defs[0].name !== 'allowed_tool') throw new Error('Wrong tool in definitions');
+  });
+
+  await test('Tool registry: execute auto-approved tool', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+
+    registry.register({
+      name: 'echo',
+      description: 'Echo back',
+      parameters: { type: 'object', properties: { text: { type: 'string', description: 'Text' } }, required: ['text'] },
+      approval: 'auto',
+      execute: async (args) => `Echo: ${args.text}`,
+    });
+
+    const result = await registry.execute('echo', { text: 'hello' }, 'msg-1');
+    if (result !== 'Echo: hello') throw new Error(`Unexpected result: ${result}`);
+  });
+
+  await test('Tool registry: execute denied tool returns error', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+
+    registry.register({
+      name: 'blocked',
+      description: 'Blocked tool',
+      parameters: { type: 'object', properties: {}, required: [] },
+      approval: 'deny',
+      execute: async () => 'should not run',
+    });
+
+    const result = await registry.execute('blocked', {}, 'msg-1');
+    if (!result.includes('disabled')) throw new Error(`Expected disabled message, got: ${result}`);
+  });
+
+  await test('Tool registry: execute unknown tool returns error', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+
+    const result = await registry.execute('nonexistent', {}, 'msg-1');
+    if (!result.includes('Unknown tool')) throw new Error(`Expected unknown tool message, got: ${result}`);
+  });
+
+  await test('Tool registry: emits tool events', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+    const events: string[] = [];
+
+    bus.on('tool:calling', () => events.push('calling'));
+    bus.on('tool:result', () => events.push('result'));
+
+    registry.register({
+      name: 'event_test',
+      description: 'Test events',
+      parameters: { type: 'object', properties: {}, required: [] },
+      approval: 'auto',
+      execute: async () => 'done',
+    });
+
+    await registry.execute('event_test', {}, 'msg-1');
+    if (!events.includes('calling')) throw new Error('Missing calling event');
+    if (!events.includes('result')) throw new Error('Missing result event');
+  });
+
+  await test('Shell exec tool runs commands', async () => {
+    const { shellExecTool } = await import('./tools/shell.js');
+    const result = await shellExecTool.execute({ command: 'echo hello' });
+    if (!result.includes('hello')) throw new Error(`Expected 'hello', got: ${result}`);
+  });
+
+  await test('File read tool reads files', async () => {
+    const { fileReadTool } = await import('./tools/file-ops.js');
+    const result = await fileReadTool.execute({ path: 'package.json' });
+    if (!result.includes('"sigil"')) throw new Error('Failed to read package.json');
+  });
+
+  await test('List dir tool lists directories', async () => {
+    const { listDirTool } = await import('./tools/file-ops.js');
+    const result = await listDirTool.execute({ path: 'src' });
+    if (!result.includes('types.ts')) throw new Error('Failed to list src directory');
+  });
+
+  await test('Memory tools: remember and recall', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, source TEXT, timestamp TEXT NOT NULL, token_count INTEGER);
+      CREATE TABLE summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, message_range_start TEXT NOT NULL, message_range_end TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL DEFAULT 'fact', content TEXT NOT NULL, tags TEXT, relevance REAL NOT NULL DEFAULT 1.0, access_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_accessed TEXT NOT NULL);
+      CREATE VIRTUAL TABLE memories_fts USING fts5(content, tags, content='memories', content_rowid='id');
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags); END;
+      CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags); END;
+      CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags); INSERT INTO memories_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags); END;
+      CREATE TABLE embeddings (memory_id INTEGER PRIMARY KEY, vector BLOB NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL);
+    `);
+
+    const { MemoryStore } = await import('./context/memory.js');
+    const { ConversationStore } = await import('./context/conversation.js');
+    const { Profile } = await import('./context/profile.js');
+    const { ContextEngine } = await import('./context/engine.js');
+    const { createMemoryTools } = await import('./tools/memory-tools.js');
+
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'Sigil', personality: 'Test.' },
+      models: [], defaultModel: '',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+    };
+
+    const memories = new MemoryStore(db);
+    const conversation = new ConversationStore(db);
+    const profile = new Profile('/tmp/sigil-test-profile-tools.md');
+    const engine = new ContextEngine(config, memories, conversation, profile, null);
+    const tools = createMemoryTools(engine);
+
+    // Find remember and recall tools
+    const rememberTool = tools.find((t) => t.name === 'remember')!;
+    const recallTool = tools.find((t) => t.name === 'recall')!;
+
+    // Remember something
+    const storeResult = await rememberTool.execute({ content: 'User birthday is May 15th', type: 'fact', tags: 'birthday' });
+    if (!storeResult.includes('Stored')) throw new Error(`Remember failed: ${storeResult}`);
+
+    // Recall it
+    const recallResult = await recallTool.execute({ query: 'birthday' });
+    if (!recallResult.includes('May 15th')) throw new Error(`Recall failed: ${recallResult}`);
+
+    // Cleanup
+    const { unlinkSync } = await import('node:fs');
+    try { unlinkSync('/tmp/sigil-test-profile-tools.md'); } catch {}
+    db.close();
+  });
+
+  await test('Memory tools: update profile', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, source TEXT, timestamp TEXT NOT NULL, token_count INTEGER);
+      CREATE TABLE summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, message_range_start TEXT NOT NULL, message_range_end TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL DEFAULT 'fact', content TEXT NOT NULL, tags TEXT, relevance REAL NOT NULL DEFAULT 1.0, access_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_accessed TEXT NOT NULL);
+      CREATE VIRTUAL TABLE memories_fts USING fts5(content, tags, content='memories', content_rowid='id');
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags); END;
+      CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags); END;
+      CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags); INSERT INTO memories_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags); END;
+      CREATE TABLE embeddings (memory_id INTEGER PRIMARY KEY, vector BLOB NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL);
+    `);
+
+    const { MemoryStore } = await import('./context/memory.js');
+    const { ConversationStore } = await import('./context/conversation.js');
+    const { Profile } = await import('./context/profile.js');
+    const { ContextEngine } = await import('./context/engine.js');
+    const { createMemoryTools } = await import('./tools/memory-tools.js');
+
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'Sigil', personality: 'Test.' },
+      models: [], defaultModel: '',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+    };
+
+    const memories = new MemoryStore(db);
+    const conversation = new ConversationStore(db);
+    const profilePath = '/tmp/sigil-test-profile-update.md';
+    const profile = new Profile(profilePath);
+    const engine = new ContextEngine(config, memories, conversation, profile, null);
+    const tools = createMemoryTools(engine);
+
+    const updateTool = tools.find((t) => t.name === 'update_profile')!;
+    await updateTool.execute({ content: '# Profile\n\n- Name: Mike\n- Likes: cats' });
+
+    const content = profile.get();
+    if (!content.includes('Mike')) throw new Error('Profile not updated');
+    if (!content.includes('cats')) throw new Error('Profile missing content');
+
+    const { unlinkSync } = await import('node:fs');
+    try { unlinkSync(profilePath); } catch {}
+    db.close();
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;

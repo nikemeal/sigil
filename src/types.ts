@@ -44,10 +44,33 @@ export interface TokenUsage {
 // LLM Providers — the interface every provider implements
 // ---------------------------------------------------------------------------
 
-/** Messages as the LLM sees them */
-export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+/** Messages as the LLM sees them — includes tool use and tool results */
+export type LLMMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string }
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  | { role: 'tool'; toolCallId: string; content: string };
+
+/** A tool call requested by the LLM */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/** Tool definition sent to the LLM so it knows what's available */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, {
+      type: string;
+      description: string;
+      enum?: string[];
+    }>;
+    required?: string[];
+  };
 }
 
 /** What we send to a provider */
@@ -57,6 +80,7 @@ export interface CompletionRequest {
   maxTokens?: number;
   temperature?: number;
   stop?: string[];
+  tools?: ToolDefinition[];
 }
 
 /** What a provider sends back */
@@ -64,7 +88,8 @@ export interface CompletionResponse {
   content: string;
   model: string;
   usage: TokenUsage;
-  finishReason: 'end' | 'max_tokens' | 'stop' | 'error';
+  finishReason: 'end' | 'max_tokens' | 'stop' | 'tool_use' | 'error';
+  toolCalls?: ToolCall[];
 }
 
 /** The contract every LLM provider must implement */
@@ -73,6 +98,27 @@ export interface LLMProvider {
   readonly providerType: 'anthropic' | 'openai-compatible';
   complete(request: CompletionRequest): Promise<CompletionResponse>;
   isAvailable(): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------
+// Tools — the agent's capabilities
+// ---------------------------------------------------------------------------
+
+/** Approval level for a tool */
+export type ToolApproval = 'auto' | 'prompt' | 'deny';
+
+/** A tool the agent can call */
+export interface Tool {
+  /** Unique name (snake_case) */
+  name: string;
+  /** Human-readable description for the LLM */
+  description: string;
+  /** JSON schema for the parameters */
+  parameters: ToolDefinition['parameters'];
+  /** Approval level — auto (no confirmation), prompt (ask user), deny (disabled) */
+  approval: ToolApproval;
+  /** Execute the tool. Returns the result as a string. */
+  execute(args: Record<string, unknown>): Promise<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +194,13 @@ export interface EventMap {
   'message:processing': { messageId: string };
   'message:complete': Response;
   'message:error': { messageId: string; error: string };
+
+  // Tool events
+  'tool:calling': { messageId: string; tool: string; args: Record<string, unknown> };
+  'tool:result': { messageId: string; tool: string; result: string };
+  'tool:approval_needed': { messageId: string; tool: string; args: Record<string, unknown> };
+  'tool:approved': { messageId: string; tool: string };
+  'tool:denied': { messageId: string; tool: string };
 
   // Transport events
   'transport:connected': { type: TransportType; id: string };

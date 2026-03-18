@@ -5,6 +5,7 @@
  * Handles the Anthropic-specific message format where the system prompt
  * is a separate parameter, not part of the messages array.
  *
+ * Supports tool calling via Anthropic's native tool_use format.
  * Includes rate limiting with exponential backoff on 429/500/503.
  */
 
@@ -14,14 +15,16 @@ import type {
   CompletionRequest,
   CompletionResponse,
   LLMMessage,
+  ToolDefinition,
+  ToolCall,
 } from '../../types.js';
 
-/** Default max tokens if not specified in request or model config */
 const DEFAULT_MAX_TOKENS = 4096;
-
-/** Backoff config for rate limiting */
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+
+type AnthropicMessage = Anthropic.Messages.MessageParam;
+type AnthropicTool = Anthropic.Messages.Tool;
 
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
@@ -33,27 +36,42 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
-    // Anthropic separates system prompt from messages
-    const { system, messages } = this.splitSystemPrompt(request.messages);
+    const { system, messages } = this.convertMessages(request.messages);
+    const tools = request.tools ? this.convertTools(request.tools) : undefined;
 
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await this.client.messages.create({
+        const params: Anthropic.Messages.MessageCreateParams = {
           model: request.model,
           max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
           temperature: request.temperature,
           system: system || undefined,
           messages,
           stop_sequences: request.stop,
-        });
+        };
 
-        // Extract text from content blocks
+        if (tools && tools.length > 0) {
+          params.tools = tools;
+        }
+
+        const response = await this.client.messages.create(params);
+
+        // Extract text content
         const content = response.content
           .filter((block): block is Anthropic.TextBlock => block.type === 'text')
           .map((block) => block.text)
           .join('');
+
+        // Extract tool calls
+        const toolCalls = response.content
+          .filter((block): block is Anthropic.ToolUseBlock => block.type === 'tool_use')
+          .map((block) => ({
+            id: block.id,
+            name: block.name,
+            arguments: block.input as Record<string, unknown>,
+          }));
 
         return {
           content,
@@ -65,14 +83,12 @@ export class AnthropicProvider implements LLMProvider {
             cacheWriteTokens: (response.usage as unknown as Record<string, number>).cache_creation_input_tokens,
           },
           finishReason: this.mapStopReason(response.stop_reason),
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         };
       } catch (err) {
         lastError = err as Error;
-
-        // Only retry on rate limit or server errors
         if (!this.isRetryable(err)) throw err;
 
-        // Exponential backoff with jitter
         const delay = this.backoffDelay(attempt, err);
         console.warn(
           `[Anthropic] Request failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), ` +
@@ -87,7 +103,6 @@ export class AnthropicProvider implements LLMProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      // Minimal request to check connectivity
       await this.client.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1,
@@ -100,65 +115,96 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   /**
-   * Anthropic expects system prompt as a separate param, not in the messages array.
-   * Split it out here.
+   * Convert our LLMMessage format to Anthropic's format.
+   * Handles system prompt extraction and tool result messages.
    */
-  private splitSystemPrompt(messages: LLMMessage[]): {
+  private convertMessages(messages: LLMMessage[]): {
     system: string;
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+    messages: AnthropicMessage[];
   } {
     let system = '';
-    const filtered: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    const result: AnthropicMessage[] = [];
 
     for (const msg of messages) {
       if (msg.role === 'system') {
-        // Concatenate multiple system messages (shouldn't happen, but be safe)
         system += (system ? '\n\n' : '') + msg.content;
-      } else {
-        filtered.push({ role: msg.role, content: msg.content });
+      } else if (msg.role === 'user') {
+        result.push({ role: 'user', content: msg.content });
+      } else if (msg.role === 'assistant') {
+        // Build content blocks for assistant messages
+        const content: Anthropic.Messages.ContentBlockParam[] = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        if (msg.toolCalls) {
+          for (const tc of msg.toolCalls) {
+            content.push({
+              type: 'tool_use',
+              id: tc.id,
+              name: tc.name,
+              input: tc.arguments,
+            });
+          }
+        }
+        result.push({ role: 'assistant', content });
+      } else if (msg.role === 'tool') {
+        // Tool results go as user messages with tool_result content type
+        result.push({
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: msg.toolCallId,
+            content: msg.content,
+          }],
+        });
       }
     }
 
-    return { system, messages: filtered };
+    return { system, messages: result };
   }
 
-  /** Map Anthropic stop reasons to our standard set */
+  /** Convert our ToolDefinition to Anthropic's format */
+  private convertTools(tools: ToolDefinition[]): AnthropicTool[] {
+    return tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: {
+        type: 'object' as const,
+        properties: t.parameters.properties,
+        required: t.parameters.required,
+      },
+    }));
+  }
+
   private mapStopReason(reason: string | null): CompletionResponse['finishReason'] {
     switch (reason) {
       case 'end_turn': return 'end';
       case 'max_tokens': return 'max_tokens';
       case 'stop_sequence': return 'stop';
+      case 'tool_use': return 'tool_use';
       default: return 'end';
     }
   }
 
-  /** Check if an error is retryable (rate limit or server error) */
   private isRetryable(err: unknown): boolean {
     if (err instanceof Anthropic.RateLimitError) return true;
     if (err instanceof Anthropic.InternalServerError) return true;
     if (err instanceof Anthropic.APIConnectionError) return true;
-
-    // Check status code for generic HTTP errors
     const status = (err as { status?: number }).status;
     return status === 429 || status === 500 || status === 503;
   }
 
-  /** Calculate backoff delay, respecting retry-after header if present */
   private backoffDelay(attempt: number, err: unknown): number {
-    // Check for retry-after header
     const retryAfter = (err as { headers?: Record<string, string> }).headers?.['retry-after'];
     if (retryAfter) {
       const seconds = parseFloat(retryAfter);
       if (!isNaN(seconds)) return seconds * 1000;
     }
-
-    // Exponential backoff with jitter: base * 2^attempt * (0.5-1.5 random)
     const jitter = 0.5 + Math.random();
     return BASE_DELAY_MS * Math.pow(2, attempt) * jitter;
   }
 }
 
-/** Simple sleep utility */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
