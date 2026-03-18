@@ -239,27 +239,14 @@ echo
 echo "=== Provisioning complete ==="
 echo
 
-# Check if existing config is v2 format (has [[models]] section)
-NEEDS_ONBOARD=true
-if [[ -f "${INSTALL_DIR}/sigil.toml" ]]; then
-  if grep -q '^\[\[models\]\]' "${INSTALL_DIR}/sigil.toml" 2>/dev/null; then
-    NEEDS_ONBOARD=false
-    echo "Valid v2 config found. To reconfigure: sigil onboard"
-    echo "To start: sigil start"
-    echo "To connect: sigil tui"
-  else
-    # Old v1 config — back it up so onboarding runs fresh
-    BACKUP="${INSTALL_DIR}/sigil.toml.v1-backup"
-    cp "${INSTALL_DIR}/sigil.toml" "${BACKUP}"
-    rm "${INSTALL_DIR}/sigil.toml"
-    echo "Old v1 config backed up to ${BACKUP}"
-  fi
-fi
-
-if [[ "${NEEDS_ONBOARD}" == "true" ]]; then
+if [[ ! -f "${INSTALL_DIR}/sigil.toml" ]]; then
   echo "Running onboarding wizard..."
   echo "(This will configure, build, and start Sigil)"
   echo
   cd "${INSTALL_DIR}" && sudo -u "${SIGIL_USER}" node dist/onboard.js
+else
+  echo "Config already exists. To reconfigure: sigil onboard"
+  echo "To start: sigil start"
+  echo "To connect: sigil tui"
 fi
 echo
