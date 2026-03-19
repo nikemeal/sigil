@@ -128,6 +128,14 @@ export class ContextEngine {
     parts.push(`You are ${this.config.identity.name}.`);
     parts.push(this.config.identity.personality);
 
+    // Environment context — so the agent knows where it lives
+    parts.push(`\n--- Environment ---`);
+    parts.push(`Working directory: ${process.cwd()}`);
+    parts.push(`Config file: sigil.toml`);
+    parts.push(`Database: ${this.config.memory.dbPath}`);
+    parts.push(`Profile: data/profile.md`);
+    parts.push(`When asked about your own files, check the working directory first.`);
+
     // Living profile
     const profileContent = this.profile.get();
     if (profileContent && !profileContent.includes('No information yet')) {
