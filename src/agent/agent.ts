@@ -1,10 +1,15 @@
 /**
  * Agent Core
  *
- * Message processing with multi-round tool calling.
- * Flow: message → build context → call LLM → if tool_use, execute tools,
- * feed results back to LLM → repeat until LLM gives a text response
- * or we hit the max rounds limit.
+ * Message processing with smart routing, context trimming,
+ * and multi-round tool calling.
+ *
+ * Flow:
+ *   1. Router classifies message complexity, picks model
+ *   2. Context trimmer adjusts context window for that model/tier
+ *   3. LLM called (possibly multiple rounds for tool use)
+ *   4. Cost tracked
+ *   5. Response broadcast
  */
 
 import { randomUUID } from 'node:crypto';
@@ -14,70 +19,108 @@ import type {
   LLMProvider,
   LLMMessage,
   SigilConfig,
-  ToolCall,
+  ModelConfig,
 } from '../types.js';
 import { EventBus } from '../lib/event-bus.js';
 import { ContextEngine } from '../context/engine.js';
 import { ToolRegistry } from '../tools/registry.js';
+import { Router, type RoutingDecision } from '../router/router.js';
+import { ProviderPool } from '../router/provider-pool.js';
+import { CostTracker } from '../router/cost-tracker.js';
+import { getTrimConfig, trimTools } from '../router/trimmer.js';
 
 /** Maximum tool-calling rounds before forcing a response */
 const MAX_TOOL_ROUNDS = 10;
 
 export class Agent {
-  private provider: LLMProvider;
   private config: SigilConfig;
   private bus: EventBus;
   private context: ContextEngine | null = null;
   private tools: ToolRegistry | null = null;
+  private router: Router;
+  private pool: ProviderPool;
+  private costTracker: CostTracker | null = null;
 
-  constructor(provider: LLMProvider, config: SigilConfig, bus: EventBus) {
-    this.provider = provider;
+  // Fallback single provider (for when pool has only one model)
+  private fallbackProvider: LLMProvider | null = null;
+
+  constructor(config: SigilConfig, bus: EventBus, pool: ProviderPool) {
     this.config = config;
     this.bus = bus;
+    this.pool = pool;
+    this.router = new Router(config);
   }
 
-  /** Attach the context engine (called after DB is initialised) */
-  setContext(context: ContextEngine): void {
-    this.context = context;
-  }
-
-  /** Attach the tool registry */
-  setTools(tools: ToolRegistry): void {
-    this.tools = tools;
-  }
+  setContext(context: ContextEngine): void { this.context = context; }
+  setTools(tools: ToolRegistry): void { this.tools = tools; }
+  setCostTracker(tracker: CostTracker): void { this.costTracker = tracker; }
+  getContext(): ContextEngine | null { return this.context; }
+  getTools(): ToolRegistry | null { return this.tools; }
 
   /**
-   * Process a message through the LLM with multi-round tool calling.
+   * Process a message: route → trim → call LLM → track cost → respond.
    */
   async process(message: Message): Promise<Response> {
     try {
-      // Build initial context
+      // 1. Route: classify and pick model
+      const decision = this.router.route(message.content);
+      const provider = this.pool.getProvider(decision.model);
+
+      console.log(
+        `[Agent] ${decision.reason} | type=${decision.classification.type} ` +
+        `confidence=${decision.classification.confidence.toFixed(2)} model=${decision.model.name}`
+      );
+
+      // 2. Trim context for this request type
+      const trimConfig = getTrimConfig(decision.classification.type);
+
+      // Build context with trimming
+      const messageWithCleanContent = { ...message, content: decision.cleanMessage };
       const llmMessages = this.context
-        ? await this.context.buildContext(message)
-        : this.buildFallbackMessages(message);
+        ? await this.context.buildContext(messageWithCleanContent, trimConfig)
+        : this.buildFallbackMessages(messageWithCleanContent);
 
       // Record user message
       if (this.context) {
-        this.context.recordMessage(message.id, 'user', message.content, message.source);
+        this.context.recordMessage(message.id, 'user', decision.cleanMessage, message.source);
       }
 
-      const model = this.resolveModel();
-      const toolDefs = this.tools ? this.tools.getDefinitions() : [];
+      // Get tool definitions (trimmed for this request type)
+      const allToolDefs = this.tools ? this.tools.getDefinitions() : [];
+      const toolDefs = trimTools(allToolDefs, trimConfig);
 
-      // Tool calling loop
+      // 3. Tool calling loop
       let round = 0;
       let currentMessages = [...llmMessages];
+      let totalUsage = { inputTokens: 0, outputTokens: 0 };
 
       while (round < MAX_TOOL_ROUNDS) {
-        const completion = await this.provider.complete({
+        const completion = await provider.complete({
           messages: currentMessages,
-          model,
+          model: decision.model.model,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
         });
 
-        // If no tool calls, we're done — return the text response
+        totalUsage.inputTokens += completion.usage.inputTokens;
+        totalUsage.outputTokens += completion.usage.outputTokens;
+
+        // No tool calls — we're done
         if (!completion.toolCalls || completion.toolCalls.length === 0) {
-          const response = this.buildResponse(message.id, completion.content, completion.model, completion.usage);
+          // Track cost
+          if (this.costTracker) {
+            this.costTracker.log(
+              message.id,
+              decision.model,
+              totalUsage,
+              decision.classification.type,
+              decision.classification.override ? 'override' : 'heuristic',
+              decision.classification.override ?? null,
+            );
+          }
+
+          const response = this.buildResponse(
+            message.id, completion.content, decision.model.model, totalUsage,
+          );
 
           if (this.context) {
             this.context.recordMessage(response.id, 'assistant', completion.content);
@@ -88,7 +131,7 @@ export class Agent {
           return response;
         }
 
-        // LLM wants to call tools — add its response to messages
+        // Tool calls — execute and continue
         const assistantMsg: LLMMessage = {
           role: 'assistant',
           content: completion.content,
@@ -96,15 +139,14 @@ export class Agent {
         };
         currentMessages.push(assistantMsg);
 
-        // Execute each tool call and add results
         for (const toolCall of completion.toolCalls) {
-          console.log(`[Agent] Tool call: ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 100)})`);
+          console.log(`[Agent] Tool: ${toolCall.name}(${JSON.stringify(toolCall.arguments).slice(0, 100)})`);
 
           const result = this.tools
             ? await this.tools.execute(toolCall.name, toolCall.arguments, message.id)
             : `Error: No tool registry available.`;
 
-          console.log(`[Agent] Tool result: ${result.slice(0, 100)}${result.length > 100 ? '...' : ''}`);
+          console.log(`[Agent] Result: ${result.slice(0, 100)}${result.length > 100 ? '...' : ''}`);
 
           const toolMsg: LLMMessage = {
             role: 'tool',
@@ -117,13 +159,13 @@ export class Agent {
         round++;
       }
 
-      // Hit max rounds — return whatever we have
+      // Hit max rounds
       const finalResponse = this.buildResponse(
         message.id,
         'I reached the maximum number of tool-calling rounds. Here is what I found so far.',
-        model,
+        decision.model.model,
+        totalUsage,
       );
-
       this.bus.emit('message:complete', finalResponse);
       this.bus.emit('broadcast:response', finalResponse);
       return finalResponse;
@@ -135,27 +177,13 @@ export class Agent {
     }
   }
 
-  /** Get the context engine */
-  getContext(): ContextEngine | null {
-    return this.context;
-  }
-
-  /** Get the tool registry */
-  getTools(): ToolRegistry | null {
-    return this.tools;
-  }
-
   private buildResponse(
-    messageId: string,
-    content: string,
-    model: string,
+    messageId: string, content: string, model: string,
     usage?: { inputTokens: number; outputTokens: number },
   ): Response {
     return {
       id: randomUUID(),
-      messageId,
-      content,
-      model,
+      messageId, content, model,
       timestamp: new Date(),
       usage,
     };
@@ -163,24 +191,8 @@ export class Agent {
 
   private buildFallbackMessages(message: Message): LLMMessage[] {
     return [
-      {
-        role: 'system' as const,
-        content: `You are ${this.config.identity.name}.\n\n${this.config.identity.personality}`,
-      },
-      {
-        role: 'user' as const,
-        content: message.content,
-      },
+      { role: 'system', content: `You are ${this.config.identity.name}.\n\n${this.config.identity.personality}` },
+      { role: 'user', content: message.content },
     ];
-  }
-
-  private resolveModel(): string {
-    const modelConfig = this.config.models.find(
-      (m) => m.name === this.config.defaultModel
-    );
-    if (!modelConfig) {
-      return this.config.models[0]?.model ?? this.config.defaultModel;
-    }
-    return modelConfig.model;
   }
 }

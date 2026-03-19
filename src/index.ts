@@ -4,7 +4,7 @@
  * Wires everything together and starts the service.
  * This is what runs when you do `sigil start` or `npm start`.
  *
- * config → db → provider → context engine → agent → gateway → WS server
+ * config → db → providers → context → tools → agent → gateway → transports
  */
 
 import { resolve } from 'node:path';
@@ -14,7 +14,6 @@ import { EventBus } from './lib/event-bus.js';
 import { Agent } from './agent/agent.js';
 import { Gateway } from './gateway/gateway.js';
 import { WSServer } from './transports/ws-server.js';
-import { createProvider } from './agent/providers/index.js';
 import { getDatabase, closeDatabase } from './context/db.js';
 import { MemoryStore } from './context/memory.js';
 import { ConversationStore } from './context/conversation.js';
@@ -26,6 +25,8 @@ import { ToolRegistry } from './tools/registry.js';
 import { shellExecTool } from './tools/shell.js';
 import { fileReadTool, fileWriteTool, listDirTool } from './tools/file-ops.js';
 import { createMemoryTools } from './tools/memory-tools.js';
+import { ProviderPool } from './router/provider-pool.js';
+import { CostTracker } from './router/cost-tracker.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -37,13 +38,17 @@ async function main(): Promise<void> {
   const config = loadConfig();
   console.log(`[Sigil] Identity: ${config.identity.name}`);
 
-  // Create event bus — the backbone of all communication
+  // Create event bus
   const bus = new EventBus();
 
   // Initialise database
   const dbPath = resolve(process.cwd(), config.memory.dbPath);
   const db = getDatabase(dbPath);
   console.log(`[Sigil] Database: ${config.memory.dbPath}`);
+
+  // Create provider pool (one provider per configured model)
+  const pool = new ProviderPool(config);
+  console.log(`[Sigil] Models: ${pool.getModelNames().join(', ') || 'none'}`);
 
   // Create memory components
   const memories = new MemoryStore(db);
@@ -55,14 +60,13 @@ async function main(): Promise<void> {
     console.log(`[Sigil] Embeddings: ${config.memory.embeddingModel}`);
   }
 
-  // Create context engine — assembles the LLM's working memory
+  // Create context engine
   const context = new ContextEngine(config, memories, conversation, profile, embeddings);
 
-  // Create LLM provider from config
-  const provider = createProvider(config);
-  console.log(`[Sigil] LLM provider: ${provider.name} (${config.defaultModel})`);
+  // Create cost tracker
+  const costTracker = new CostTracker(db);
 
-  // Create tool registry and register built-in tools
+  // Create tool registry
   const tools = new ToolRegistry(bus);
   tools.register(shellExecTool);
   tools.register(fileReadTool);
@@ -72,12 +76,13 @@ async function main(): Promise<void> {
     tools.register(tool);
   }
 
-  // Create agent and attach context + tools
-  const agent = new Agent(provider, config, bus);
+  // Create agent with provider pool and router
+  const agent = new Agent(config, bus, pool);
   agent.setContext(context);
   agent.setTools(tools);
+  agent.setCostTracker(costTracker);
 
-  // Create gateway — routes messages between transports and agent
+  // Create gateway
   const gateway = new Gateway(bus, agent);
 
   // Start WebSocket server
@@ -98,7 +103,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Signal that the system is ready
+  // Signal ready
   bus.emit('system:ready', { timestamp: new Date() });
   console.log('[Sigil] Ready.');
 

@@ -110,17 +110,9 @@ async function run(): Promise<void> {
     const { Agent } = await import('./agent/agent.js');
     const { Gateway } = await import('./gateway/gateway.js');
     const { WSServer } = await import('./transports/ws-server.js');
+    const { ProviderPool } = await import('./router/provider-pool.js');
 
     const bus = new EventBus();
-    const dummyProvider = {
-      name: 'test', providerType: 'anthropic' as const,
-      complete: async () => ({
-        content: 'test', model: 'test',
-        usage: { inputTokens: 0, outputTokens: 0 },
-        finishReason: 'end' as const,
-      }),
-      isAvailable: async () => true,
-    };
     const config = {
       version: '2.0.0',
       identity: { name: 'test', personality: 'test' },
@@ -132,7 +124,8 @@ async function run(): Promise<void> {
         telegram: { enabled: false },
       },
     };
-    const agent = new Agent(dummyProvider, config, bus);
+    const pool = new ProviderPool(config);
+    const agent = new Agent(config, bus, pool);
     const gateway = new Gateway(bus, agent);
     const server = new WSServer(bus, gateway, config);
     await server.start();
@@ -587,6 +580,148 @@ async function run(): Promise<void> {
 
     const { unlinkSync } = await import('node:fs');
     try { unlinkSync(profilePath); } catch {}
+    db.close();
+  });
+
+  // ── Module 5: Routing ──────────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 5: Routing'));
+
+  await test('Classifier: casual chat detected', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('hi');
+    if (classification.type !== 'chat') throw new Error(`Expected chat, got ${classification.type}`);
+  });
+
+  await test('Classifier: tool request detected', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('what is the uptime of this server?');
+    if (classification.type !== 'tool') throw new Error(`Expected tool, got ${classification.type}`);
+  });
+
+  await test('Classifier: complex request detected', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('explain how neural networks work in detail');
+    if (classification.type !== 'complex') throw new Error(`Expected complex, got ${classification.type}`);
+  });
+
+  await test('Classifier: question detected', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('what is the capital of France?');
+    if (classification.type !== 'question') throw new Error(`Expected question, got ${classification.type}`);
+  });
+
+  await test('Classifier: /local override extracted', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification, cleanMessage } = classify('/local tell me a joke');
+    if (classification.override !== 'local') throw new Error(`Expected local override, got ${classification.override}`);
+    if (cleanMessage !== 'tell me a joke') throw new Error(`Message not cleaned: ${cleanMessage}`);
+  });
+
+  await test('Classifier: /cloud override extracted', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification, cleanMessage } = classify('/cloud explain quantum computing');
+    if (classification.override !== 'cloud') throw new Error(`Expected cloud override`);
+    if (cleanMessage !== 'explain quantum computing') throw new Error(`Message not cleaned`);
+  });
+
+  await test('Classifier: /private override extracted', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('/private what is my salary?');
+    if (classification.override !== 'private') throw new Error(`Expected private override`);
+  });
+
+  await test('Router: single model returns it for everything', async () => {
+    const { Router } = await import('./router/router.js');
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'test', personality: 'test' },
+      models: [{ name: 'local', provider: 'openai-compatible', model: 'qwen3:8b', tier: 'basic' as const, costPer1kInput: 0, costPer1kOutput: 0, useFor: ['general'] }],
+      defaultModel: 'local',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+    };
+    const router = new Router(config);
+
+    const chat = router.route('hi');
+    const complex = router.route('explain quantum computing in detail');
+    if (chat.model.name !== 'local') throw new Error('Wrong model for chat');
+    if (complex.model.name !== 'local') throw new Error('Wrong model for complex');
+  });
+
+  await test('Router: multi-model routes by tier', async () => {
+    const { Router } = await import('./router/router.js');
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'test', personality: 'test' },
+      models: [
+        { name: 'local', provider: 'openai-compatible', model: 'qwen3:8b', tier: 'basic' as const, costPer1kInput: 0, costPer1kOutput: 0, useFor: ['general'] },
+        { name: 'claude', provider: 'anthropic', model: 'claude-sonnet', tier: 'standard' as const, costPer1kInput: 0.003, costPer1kOutput: 0.015, useFor: ['general'] },
+      ],
+      defaultModel: 'local',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+    };
+    const router = new Router(config);
+
+    const chat = router.route('hi');
+    if (chat.model.name !== 'local') throw new Error(`Chat should route to local, got ${chat.model.name}`);
+
+    const tool = router.route('run uptime command');
+    if (tool.model.name !== 'claude') throw new Error(`Tool should route to claude (standard), got ${tool.model.name}`);
+  });
+
+  await test('Router: /local override forces local model', async () => {
+    const { Router } = await import('./router/router.js');
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'test', personality: 'test' },
+      models: [
+        { name: 'local', provider: 'openai-compatible', model: 'qwen3:8b', tier: 'basic' as const, costPer1kInput: 0, costPer1kOutput: 0, useFor: ['general'] },
+        { name: 'claude', provider: 'anthropic', model: 'claude-sonnet', tier: 'standard' as const, costPer1kInput: 0.003, costPer1kOutput: 0.015, useFor: ['general'] },
+      ],
+      defaultModel: 'local',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+    };
+    const router = new Router(config);
+
+    // This would normally route to claude (complex), but /local forces local
+    const result = router.route('/local explain quantum computing in detail');
+    if (result.model.name !== 'local') throw new Error(`Override should force local, got ${result.model.name}`);
+  });
+
+  await test('Context trimmer: chat gets fewer messages', async () => {
+    const { getTrimConfig } = await import('./router/trimmer.js');
+    const chatTrim = getTrimConfig('chat');
+    const complexTrim = getTrimConfig('complex');
+    if (chatTrim.maxHistory >= complexTrim.maxHistory) throw new Error('Chat should get less history than complex');
+    if (chatTrim.includeTools) throw new Error('Chat should not include tools');
+    if (!complexTrim.includeTools) throw new Error('Complex should include tools');
+  });
+
+  await test('Cost tracker: log and retrieve', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE usage (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT, model TEXT, tier TEXT, request_type TEXT, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, estimated_cost REAL DEFAULT 0, routed_by TEXT, override TEXT, timestamp TEXT);
+      CREATE TABLE routing_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, classified_type TEXT, actual_tokens INTEGER, model_used TEXT, created_at TEXT);
+    `);
+
+    const { CostTracker } = await import('./router/cost-tracker.js');
+    const tracker = new CostTracker(db);
+
+    tracker.log('msg-1', {
+      name: 'claude', provider: 'anthropic', model: 'claude-sonnet',
+      tier: 'standard', costPer1kInput: 0.003, costPer1kOutput: 0.015, useFor: [],
+    }, { inputTokens: 1000, outputTokens: 500 }, 'complex', 'heuristic', null);
+
+    const today = tracker.getTodaySummary();
+    if (today.totalRequests !== 1) throw new Error(`Expected 1 request, got ${today.totalRequests}`);
+    if (today.totalCost === 0) throw new Error('Cost should be > 0');
+
+    const total = tracker.getTotalSpend();
+    if (total === 0) throw new Error('Total spend should be > 0');
+
     db.close();
   });
 

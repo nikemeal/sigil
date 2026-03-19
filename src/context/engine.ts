@@ -17,6 +17,7 @@ import { MemoryStore, type MemorySearchResult } from './memory.js';
 import { ConversationStore } from './conversation.js';
 import { Profile } from './profile.js';
 import { type EmbeddingProvider } from './embeddings.js';
+import { type TrimConfig } from '../router/trimmer.js';
 
 export class ContextEngine {
   private config: SigilConfig;
@@ -42,17 +43,26 @@ export class ContextEngine {
   /**
    * Build the full message array for an LLM request.
    * This is called once per incoming message.
+   * Optional trimConfig controls how much context to include.
    */
-  async buildContext(message: Message): Promise<LLMMessage[]> {
+  async buildContext(message: Message, trimConfig?: TrimConfig): Promise<LLMMessage[]> {
     const messages: LLMMessage[] = [];
 
-    // 1. System prompt (identity + profile + memories)
-    const systemPrompt = await this.buildSystemPrompt(message.content);
+    // 1. System prompt (identity + profile + optionally memories)
+    const includeMemories = trimConfig ? trimConfig.includeMemories : true;
+    const systemPrompt = await this.buildSystemPrompt(
+      includeMemories ? message.content : null,
+    );
     messages.push({ role: 'system', content: systemPrompt });
 
-    // 2. Conversation history (compressed older + recent verbatim)
-    const history = await this.conversation.buildHistory();
-    messages.push(...history);
+    // 2. Conversation history (trimmed based on config)
+    const maxHistory = trimConfig?.maxHistory ?? 20;
+    const recent = this.conversation.getRecent(maxHistory);
+    for (const msg of recent) {
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
 
     // 3. Current message
     messages.push({ role: 'user', content: message.content });
@@ -121,7 +131,7 @@ export class ContextEngine {
   /**
    * Build the system prompt with identity, profile, and relevant memories.
    */
-  private async buildSystemPrompt(currentMessage: string): Promise<string> {
+  private async buildSystemPrompt(currentMessage: string | null): Promise<string> {
     const parts: string[] = [];
 
     // Identity
@@ -142,7 +152,9 @@ export class ContextEngine {
       parts.push(`\n--- User Profile ---\n${profileContent}`);
     }
 
-    // Recall relevant memories
+    // Recall relevant memories (skip if currentMessage is null — trimmed mode)
+    if (!currentMessage) return parts.join('\n\n');
+
     const recalled = await this.recall(currentMessage);
     if (recalled.length > 0) {
       const memoryText = recalled

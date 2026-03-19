@@ -119,5 +119,32 @@ function migrate(db: Database.Database): void {
       message_range_end TEXT NOT NULL,    -- last message id covered
       created_at TEXT NOT NULL
     );
+
+    -- Usage/cost tracking per request
+    CREATE TABLE IF NOT EXISTS usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      request_type TEXT NOT NULL,         -- 'chat' | 'question' | 'tool' | 'complex'
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost REAL NOT NULL DEFAULT 0,
+      routed_by TEXT,                     -- 'heuristic' | 'classifier' | 'override'
+      override TEXT,                      -- '/local' | '/cloud' | '/private' | null
+      timestamp TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage(timestamp);
+
+    -- Routing patterns for learning (Module 11 uses this)
+    CREATE TABLE IF NOT EXISTS routing_patterns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pattern TEXT NOT NULL,              -- normalised message pattern
+      classified_type TEXT NOT NULL,      -- what the router decided
+      actual_tokens INTEGER,             -- how many tokens it actually used
+      model_used TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
 }
