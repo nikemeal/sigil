@@ -16,10 +16,11 @@ import { classify, type Classification, type RequestType } from './classifier.js
 
 /** Which model tier to prefer for each request type */
 const TIER_PREFERENCE: Record<RequestType, string[]> = {
-  chat:     ['basic', 'minimal', 'standard', 'full'],
-  question: ['basic', 'standard', 'minimal', 'full'],
-  tool:     ['standard', 'basic', 'full', 'minimal'],
-  complex:  ['full', 'standard', 'basic', 'minimal'],
+  chat:       ['basic', 'minimal', 'standard', 'full'],
+  question:   ['basic', 'standard', 'minimal', 'full'],
+  tool:       ['standard', 'basic', 'full', 'minimal'],
+  complex:    ['full', 'standard', 'basic', 'minimal'],
+  background: ['full', 'standard', 'basic', 'minimal'],
 };
 
 export interface RoutingDecision {

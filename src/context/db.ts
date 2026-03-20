@@ -146,5 +146,40 @@ function migrate(db: Database.Database): void {
       model_used TEXT,
       created_at TEXT NOT NULL
     );
+
+    -- Background tasks (Module 6)
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      user_message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      result TEXT,
+      source TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      total_cost REAL DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+    -- Task orchestration steps
+    CREATE TABLE IF NOT EXISTS task_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      step_number INTEGER NOT NULL,
+      description TEXT NOT NULL,
+      assigned_model TEXT,
+      assigned_tier TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      result TEXT,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cost REAL DEFAULT 0,
+      started_at TEXT,
+      completed_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
   `);
 }

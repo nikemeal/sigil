@@ -14,7 +14,7 @@
  */
 
 /** Request complexity type */
-export type RequestType = 'chat' | 'question' | 'tool' | 'complex';
+export type RequestType = 'chat' | 'question' | 'tool' | 'complex' | 'background';
 
 /** Result of classification */
 export interface Classification {
@@ -49,11 +49,18 @@ const CHAT_INDICATORS = [
   'bye', 'goodbye', 'lol', 'haha',
 ];
 
+const BACKGROUND_INDICATORS = [
+  'research', 'look into', 'find out', 'get back to me',
+  'when you have time', 'in the background', 'dig into',
+  'investigate', 'deep dive', 'thorough',
+];
+
 /** Override prefixes that users can type */
 const OVERRIDES: Record<string, string> = {
   '/local': 'local',
   '/cloud': 'cloud',
   '/private': 'private',
+  '/bg': 'background',
 };
 
 /**
@@ -85,6 +92,21 @@ export function classify(message: string): { classification: Classification; cle
         cleanMessage,
       };
     }
+  }
+
+  // Check for background task indicators
+  if (override === 'background') {
+    return {
+      classification: { type: 'background', confidence: 0.95, reason: 'Override: /bg', override: 'background' },
+      cleanMessage,
+    };
+  }
+  const bgMatch = BACKGROUND_INDICATORS.find((t) => lower.includes(t));
+  if (bgMatch && wordCount > 8) {
+    return {
+      classification: { type: 'background', confidence: 0.7, reason: `Background indicator: "${bgMatch}"`, override },
+      cleanMessage,
+    };
   }
 
   // Check for tool indicators

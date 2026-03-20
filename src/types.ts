@@ -183,6 +183,42 @@ export interface SigilConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Tasks — background work + orchestration (module 6)
+// ---------------------------------------------------------------------------
+
+export type TaskStatus = 'queued' | 'running' | 'paused' | 'complete' | 'error';
+
+/** A background task with optional multi-step orchestration */
+export interface Task {
+  id: string;
+  userMessage: string;
+  status: TaskStatus;
+  result?: string;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  totalCost: number;
+  totalTokens: number;
+  source: string;
+  steps: TaskStep[];
+}
+
+/** A single step within an orchestrated task */
+export interface TaskStep {
+  id: number;
+  taskId: string;
+  stepNumber: number;
+  description: string;
+  assignedModel: string;
+  assignedTier: string;
+  status: TaskStatus;
+  result?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
+// ---------------------------------------------------------------------------
 // Event Bus — typed events for inter-component communication
 // ---------------------------------------------------------------------------
 
@@ -210,6 +246,13 @@ export interface EventMap {
   'system:ready': { timestamp: Date };
   'system:shutdown': { reason: string };
   'system:error': { component: string; error: string };
+
+  // Task events (module 6)
+  'task:created': { task: Task };
+  'task:started': { taskId: string };
+  'task:step_complete': { taskId: string; step: TaskStep };
+  'task:complete': { taskId: string; result: string; cost: number };
+  'task:error': { taskId: string; error: string };
 
   // Broadcast — send to all connected transports
   'broadcast:response': Response;

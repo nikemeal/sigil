@@ -34,6 +34,10 @@ import { fileReadTool, fileWriteTool, listDirTool } from './tools/file-ops.js';
 import { createMemoryTools } from './tools/memory-tools.js';
 import { ProviderPool } from './router/provider-pool.js';
 import { CostTracker } from './router/cost-tracker.js';
+import { TaskStore } from './tasks/store.js';
+import { Planner } from './tasks/planner.js';
+import { TaskRunner } from './tasks/runner.js';
+import { Scheduler } from './tasks/scheduler.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -92,6 +96,19 @@ async function main(): Promise<void> {
   // Create gateway
   const gateway = new Gateway(bus, agent);
 
+  // Create background task system (module 6)
+  const taskStore = new TaskStore(db);
+  const planner = new Planner(config, pool);
+  const taskRunner = new TaskRunner(bus, pool, context, tools, costTracker, taskStore, planner, config);
+  const scheduler = new Scheduler(bus, taskRunner, taskStore);
+  gateway.setTaskComponents(taskStore, scheduler);
+  scheduler.start();
+
+  // Record background task results in conversation history
+  bus.on('task:complete', ({ taskId, result }) => {
+    context.recordMessage(taskId, 'assistant', result);
+  });
+
   // Start WebSocket server
   const wsServer = new WSServer(bus, gateway, config);
   await wsServer.start();
@@ -118,6 +135,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`\n[Sigil] Received ${signal}, shutting down...`);
     bus.emit('system:shutdown', { reason: signal });
+    scheduler.stop();
     if (telegramTransport) await telegramTransport.stop();
     await wsServer.stop();
     closeDatabase();

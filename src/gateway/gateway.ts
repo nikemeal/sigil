@@ -15,19 +15,30 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Message, TransportType } from '../types.js';
+import type { Message, Response, TransportType } from '../types.js';
 import { EventBus } from '../lib/event-bus.js';
 import { Agent } from '../agent/agent.js';
+import { classify } from '../router/classifier.js';
+import { TaskStore } from '../tasks/store.js';
+import { Scheduler } from '../tasks/scheduler.js';
 
 export class Gateway {
   private bus: EventBus;
   private agent: Agent;
   private queue: Message[] = [];
   private processing = false;
+  private taskStore: TaskStore | null = null;
+  private scheduler: Scheduler | null = null;
 
   constructor(bus: EventBus, agent: Agent) {
     this.bus = bus;
     this.agent = agent;
+  }
+
+  /** Enable background task support */
+  setTaskComponents(taskStore: TaskStore, scheduler: Scheduler): void {
+    this.taskStore = taskStore;
+    this.scheduler = scheduler;
   }
 
   /**
@@ -76,6 +87,15 @@ export class Gateway {
 
       this.bus.emit('message:processing', { messageId: message.id });
 
+      // Check if this should be a background task
+      if (this.taskStore && this.scheduler) {
+        const { classification, cleanMessage } = classify(message.content);
+        if (classification.type === 'background') {
+          this.handleBackgroundTask(message, cleanMessage);
+          continue;
+        }
+      }
+
       try {
         await this.agent.process(message);
       } catch (err) {
@@ -89,5 +109,32 @@ export class Gateway {
     }
 
     this.processing = false;
+  }
+
+  /** Create a background task and send an immediate acknowledgement */
+  private handleBackgroundTask(message: Message, cleanMessage: string): void {
+    const task = this.taskStore!.create(cleanMessage, message.source);
+    this.scheduler!.enqueue(task.id);
+
+    console.log(`[Gateway] Background task created: ${task.id.slice(0, 8)}`);
+    this.bus.emit('task:created', { task });
+
+    // Send immediate acknowledgement
+    const ack: Response = {
+      id: randomUUID(),
+      messageId: message.id,
+      content: `I'll dig into that and get back to you. (Task ${task.id.slice(0, 8)})`,
+      model: 'system',
+      timestamp: new Date(),
+    };
+    this.bus.emit('message:complete', ack);
+    this.bus.emit('broadcast:response', ack);
+
+    // Record user message in conversation
+    const context = this.agent.getContext();
+    if (context) {
+      context.recordMessage(message.id, 'user', cleanMessage, message.source);
+      context.recordMessage(ack.id, 'assistant', ack.content);
+    }
   }
 }

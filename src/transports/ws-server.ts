@@ -135,6 +135,24 @@ export class WSServer {
       });
     });
 
+    // Task events (module 6)
+    this.bus.on('task:complete', ({ taskId, result, cost }) => {
+      this.broadcast({
+        type: 'response',
+        content: result,
+        model: 'background-task',
+        messageId: taskId,
+      });
+    });
+
+    this.bus.on('task:error', ({ taskId, error }) => {
+      this.broadcast({
+        type: 'error',
+        content: `Task ${taskId.slice(0, 8)} failed: ${error}`,
+        messageId: taskId,
+      });
+    });
+
     // Start listening
     const { port, host } = this.config.transports.web;
     await this.fastify.listen({ port, host });

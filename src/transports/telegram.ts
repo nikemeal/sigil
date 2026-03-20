@@ -112,6 +112,15 @@ export class TelegramTransport {
         : 'ℹ️ ';
       await this.broadcastToChats(prefix + notification.content);
     });
+
+    // Task events (module 6)
+    this.bus.on('task:complete', async ({ taskId, result }) => {
+      await this.broadcastToChats(`📋 Task ${taskId.slice(0, 8)} complete:\n\n${result}`);
+    });
+
+    this.bus.on('task:error', async ({ taskId, error }) => {
+      await this.broadcastToChats(`⚠️ Task ${taskId.slice(0, 8)} failed: ${error}`);
+    });
   }
 
   /** Send a message to all active Telegram chats */

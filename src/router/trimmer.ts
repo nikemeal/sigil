@@ -49,6 +49,12 @@ const TRIM_RULES: Record<RequestType, TrimConfig> = {
     includeTools: true,
     maxTools: 0,        // no limit
   },
+  background: {
+    maxHistory: 10,
+    includeMemories: true,
+    includeTools: true,
+    maxTools: 0,
+  },
 };
 
 /** Get the trim config for a request type */
