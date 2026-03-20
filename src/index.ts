@@ -7,6 +7,13 @@
  * config → db → providers → context → tools → agent → gateway → transports
  */
 
+// Suppress Node 22 punycode deprecation from grammy dependency
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'DeprecationWarning' && warning.message.includes('punycode')) return;
+  console.warn(warning);
+});
+
 import { resolve } from 'node:path';
 import { loadEnv } from './lib/env.js';
 import { loadConfig } from './gateway/config.js';
