@@ -106,8 +106,15 @@ Respond ONLY with a JSON array of 1-5 steps. No markdown, no explanation. Exampl
       tier: tiers.includes(step.tier as ModelTier) ? step.tier : 'standard',
     }));
 
+    // Single step — always pass through the original message so the
+    // execution model sees the real request, not the planner's rewording
+    // (cheap models often *answer* instead of *planning*).
+    if (validated.length === 1) {
+      return [{ description: message, tier: validated[0].tier }];
+    }
+
     // Collapse redundant multi-step plans to a single step
-    if (validated.length > 1 && this.stepsLookRedundant(validated)) {
+    if (this.stepsLookRedundant(validated)) {
       return [{ description: message, tier: validated[0].tier }];
     }
 
