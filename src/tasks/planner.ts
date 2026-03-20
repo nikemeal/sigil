@@ -71,15 +71,23 @@ export class Planner {
       messages: [
         {
           role: 'system',
-          content: `You are a task planner. Break the user's request into 2-5 sequential steps. For each step, assign a model tier based on complexity.
+          content: `You are a task planner. Decide how to handle this request.
+
+IMPORTANT RULES:
+- Most requests should be a SINGLE step. Only split into multiple steps when the request has genuinely distinct phases.
+- NEVER create steps that ask the user questions or wait for input — you cannot interact with the user during task execution.
+- NEVER split a simple request into redundant steps.
+
+Examples of SINGLE step: "tell me a joke", "what's the weather", "summarize this topic", "explain X"
+Examples of MULTI step: "research X then write a report comparing it to Y", "find the top 5 packages for Z then evaluate each one"
 
 Available tiers: ${tierList}
 - basic/minimal: simple lookups, classification, summarisation
 - standard: general reasoning, writing, tool use
 - full: complex analysis, long-form writing, multi-step reasoning
 
-Respond ONLY with a JSON array. No markdown, no explanation. Example:
-[{"description": "Search for relevant information about X", "tier": "basic"}, {"description": "Analyse findings and write a summary", "tier": "standard"}]`,
+Respond ONLY with a JSON array of 1-5 steps. No markdown, no explanation. Example:
+[{"description": "Tell a funny joke about programming", "tier": "basic"}]`,
         },
         { role: 'user', content: message },
       ],
@@ -93,9 +101,38 @@ Respond ONLY with a JSON array. No markdown, no explanation. Example:
     }
 
     // Validate and cap at 5 steps
-    return parsed.slice(0, 5).map((step) => ({
+    const validated = parsed.slice(0, 5).map((step) => ({
       description: String(step.description),
       tier: tiers.includes(step.tier as ModelTier) ? step.tier : 'standard',
     }));
+
+    // Collapse redundant multi-step plans to a single step
+    if (validated.length > 1 && this.stepsLookRedundant(validated)) {
+      return [{ description: message, tier: validated[0].tier }];
+    }
+
+    return validated;
+  }
+
+  /**
+   * Detect when the planner over-decomposes a simple request into
+   * multiple steps that are effectively the same task.
+   */
+  private stepsLookRedundant(steps: PlannedStep[]): boolean {
+    // All steps on the same tier is a weak signal of redundancy
+    const sameTier = steps.every((s) => s.tier === steps[0].tier);
+    if (!sameTier) return false;
+
+    // Check for high word overlap between step descriptions
+    const wordSets = steps.map((s) =>
+      new Set(s.description.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)),
+    );
+    for (let i = 1; i < wordSets.length; i++) {
+      const overlap = [...wordSets[i]].filter((w) => wordSets[0].has(w)).length;
+      const ratio = overlap / Math.max(wordSets[0].size, wordSets[i].size);
+      if (ratio < 0.5) return false;
+    }
+
+    return true;
   }
 }
