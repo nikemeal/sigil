@@ -302,14 +302,14 @@ async function setupProvider(state: OnboardState): Promise<void> {
 
     } else if (action.startsWith('Reconfigure')) {
       const names = state.providers.map((p) => `${p.modelName} (${p.model})`);
-      const picked = await choose('Which model?', names);
+      const picked = await choose('Which model?', [...names, 'Back']);
+      if (picked === 'Back') continue;
       const idx = names.indexOf(picked);
       if (idx >= 0) {
         console.log(chalk.dim(`\n  Replacing ${state.providers[idx].modelName}...`));
-        const before = state.providers.length;
-        await addProvider(state);
+        const added = await addProvider(state);
         // Replace old with new
-        if (state.providers.length > before) {
+        if (added) {
           state.providers[idx] = state.providers.pop()!;
         }
       }
@@ -320,7 +320,8 @@ async function setupProvider(state: OnboardState): Promise<void> {
         continue;
       }
       const names = state.providers.map((p) => `${p.modelName} (${p.model})`);
-      const picked = await choose('Which model to remove?', names);
+      const picked = await choose('Which model to remove?', [...names, 'Back']);
+      if (picked === 'Back') continue;
       const idx = names.indexOf(picked);
       if (idx >= 0) {
         console.log(chalk.green(`  Removed ${state.providers[idx].modelName}`));
@@ -330,14 +331,21 @@ async function setupProvider(state: OnboardState): Promise<void> {
   }
 }
 
-async function addProvider(state: OnboardState): Promise<void> {
+/** Add a new provider. Returns true if one was added, false if cancelled. */
+async function addProvider(state: OnboardState): Promise<boolean> {
   console.log();
-  console.log(chalk.bold(state.providers.length === 0 ? 'LLM Provider' : 'Additional Model'));
-  const providerChoice = await choose('Which LLM provider?', [
+  const isFirst = state.providers.length === 0;
+  console.log(chalk.bold(isFirst ? 'LLM Provider' : 'Additional Model'));
+
+  const options = [
     'Anthropic (Claude)',
     'OpenAI',
     'OpenAI-compatible (Ollama, Groq, LM Studio, etc.)',
-  ]);
+    ...(isFirst ? [] : ['Back']),
+  ];
+  const providerChoice = await choose('Which LLM provider?', options);
+
+  if (providerChoice === 'Back') return false;
 
   if (providerChoice.startsWith('Anthropic')) {
     const apiKey = await ask('Anthropic API key');
@@ -378,6 +386,7 @@ async function addProvider(state: OnboardState): Promise<void> {
       tier: 'basic', costIn: 0, costOut: 0,
     });
   }
+  return true;
 }
 
 async function setupMemory(state: OnboardState): Promise<void> {
