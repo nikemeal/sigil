@@ -52,8 +52,13 @@ export function loadConfig(): SigilConfig {
     const parsed = TOML.parse(raw) as Record<string, unknown>;
     return mergeConfig(parsed);
   } catch (err) {
-    console.error('[Config] Failed to parse sigil.toml:', err);
-    console.warn('[Config] Falling back to defaults.');
+    const tomlErr = err as { line?: number; col?: number; message?: string };
+    if (tomlErr.line !== undefined) {
+      console.error(`[Config] TOML parse error in ${CONFIG_PATH} at line ${tomlErr.line}, col ${tomlErr.col}: ${tomlErr.message}`);
+    } else {
+      console.error('[Config] Failed to parse sigil.toml:', err);
+    }
+    console.warn('[Config] Falling back to defaults. Fix sigil.toml or re-run: npm run onboard');
     return { ...DEFAULTS };
   }
 }

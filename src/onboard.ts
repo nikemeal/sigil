@@ -180,18 +180,20 @@ async function selectEmbeddingModel(baseUrl: string, apiKey?: string, defaultMod
 
 // ── Config state ──────────────────────────────────────────────────────
 
+interface ProviderConfig {
+  type: 'anthropic' | 'openai' | 'openai-compatible';
+  modelName: string;
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  tier: string;
+  costIn: number;
+  costOut: number;
+}
+
 interface OnboardState {
   identity: { name: string; personality: string };
-  provider: {
-    type: 'anthropic' | 'openai' | 'openai-compatible';
-    modelName: string;
-    model: string;
-    baseUrl?: string;
-    apiKeyEnv?: string;
-    tier: string;
-    costIn: number;
-    costOut: number;
-  };
+  providers: ProviderConfig[];
   memory: {
     embeddingModel?: string;
     embeddingProvider?: string;
@@ -216,18 +218,13 @@ function loadExistingState(): OnboardState | null {
     const memory = parsed.memory as Record<string, unknown> | undefined;
     const transports = parsed.transports as Record<string, unknown> | undefined;
     const telegram = transports?.telegram as Record<string, unknown> | undefined;
-    const m = models?.[0];
 
-    if (!m) return null;
+    if (!models || models.length === 0) return null;
 
-    const provider = m.provider as string;
-    return {
-      identity: {
-        name: (identity?.name as string) ?? 'Sigil',
-        personality: (identity?.personality as string) ?? 'A helpful, direct personal AI agent.',
-      },
-      provider: {
-        type: provider === 'anthropic' ? 'anthropic'
+    const providers: ProviderConfig[] = models.map((m) => {
+      const prov = m.provider as string;
+      return {
+        type: prov === 'anthropic' ? 'anthropic'
           : (m.base_url as string)?.includes('api.openai.com') ? 'openai'
           : 'openai-compatible',
         modelName: m.name as string,
@@ -237,7 +234,15 @@ function loadExistingState(): OnboardState | null {
         tier: (m.tier as string) ?? 'basic',
         costIn: (m.cost_per_1k_input as number) ?? 0,
         costOut: (m.cost_per_1k_output as number) ?? 0,
+      };
+    });
+
+    return {
+      identity: {
+        name: (identity?.name as string) ?? 'Sigil',
+        personality: (identity?.personality as string) ?? 'A helpful, direct personal AI agent.',
       },
+      providers,
       memory: {
         embeddingModel: memory?.embedding_model as string | undefined,
         embeddingProvider: memory?.embedding_provider as string | undefined,
@@ -263,8 +268,25 @@ async function setupIdentity(state: OnboardState): Promise<void> {
 }
 
 async function setupProvider(state: OnboardState): Promise<void> {
+  // Clear existing providers when reconfiguring
+  state.providers = [];
+  await addProvider(state);
+
+  // Loop to add more models
+  while (true) {
+    const more = await ask('Add another model? (y/n)', 'n');
+    if (more.toLowerCase() !== 'y') break;
+    await addProvider(state);
+  }
+
+  if (state.providers.length > 1) {
+    console.log(chalk.green(`\n  ${state.providers.length} models configured: ${state.providers.map((p) => p.modelName).join(', ')}`));
+  }
+}
+
+async function addProvider(state: OnboardState): Promise<void> {
   console.log();
-  console.log(chalk.bold('LLM Provider'));
+  console.log(chalk.bold(state.providers.length === 0 ? 'LLM Provider' : 'Additional Model'));
   const providerChoice = await choose('Which LLM provider?', [
     'Anthropic (Claude)',
     'OpenAI',
@@ -274,21 +296,21 @@ async function setupProvider(state: OnboardState): Promise<void> {
   if (providerChoice.startsWith('Anthropic')) {
     const apiKey = await ask('Anthropic API key');
     const model = await ask('Model', 'claude-sonnet-4-20250514');
-    state.provider = {
+    state.providers.push({
       type: 'anthropic', modelName: 'claude', model,
       apiKeyEnv: 'ANTHROPIC_API_KEY',
       tier: 'standard', costIn: 0.003, costOut: 0.015,
-    };
+    });
     state.envLines.push(`ANTHROPIC_API_KEY=${apiKey}`);
 
   } else if (providerChoice === 'OpenAI') {
     const apiKey = await ask('OpenAI API key');
     const model = await selectModel('https://api.openai.com', apiKey, 'gpt-4o');
-    state.provider = {
+    state.providers.push({
       type: 'openai', modelName: 'openai', model,
       baseUrl: 'https://api.openai.com', apiKeyEnv: 'OPENAI_API_KEY',
       tier: 'standard', costIn: 0.005, costOut: 0.015,
-    };
+    });
     state.envLines.push(`OPENAI_API_KEY=${apiKey}`);
 
   } else {
@@ -304,11 +326,11 @@ async function setupProvider(state: OnboardState): Promise<void> {
     }
 
     const model = await selectModel(baseUrl, apiKey, 'qwen3:8b');
-    state.provider = {
+    state.providers.push({
       type: 'openai-compatible', modelName: 'local', model,
       baseUrl, apiKeyEnv,
       tier: 'basic', costIn: 0, costOut: 0,
-    };
+    });
   }
 }
 
@@ -335,7 +357,7 @@ async function setupMemory(state: OnboardState): Promise<void> {
   console.log(chalk.dim('\n  Embeddings need a model that converts text to vectors.'));
   console.log(chalk.dim('  This can run on the same provider as your LLM.\n'));
 
-  if (state.provider.type === 'anthropic') {
+  if (state.providers[0].type === 'anthropic') {
     // Anthropic doesn't offer embeddings — need a separate source
     console.log(chalk.yellow('  Note: Anthropic does not offer embeddings.'));
     console.log(chalk.dim('  You\'ll need a separate provider (e.g. Ollama with nomic-embed-text,'));
@@ -378,13 +400,13 @@ async function setupMemory(state: OnboardState): Promise<void> {
 
   } else {
     // OpenAI or OpenAI-compatible — embeddings likely available on same provider
-    const providerLabel = state.provider.type === 'openai'
-      ? 'OpenAI' : state.provider.baseUrl;
+    const providerLabel = state.providers[0].type === 'openai'
+      ? 'OpenAI' : state.providers[0].baseUrl;
     const sameProvider = await ask(`Use ${providerLabel} for embeddings?`, 'y');
 
     if (sameProvider.toLowerCase() === 'y') {
-      const baseUrl = state.provider.baseUrl ?? 'https://api.openai.com';
-      const defaultEmbed = state.provider.type === 'openai'
+      const baseUrl = state.providers[0].baseUrl ?? 'https://api.openai.com';
+      const defaultEmbed = state.providers[0].type === 'openai'
         ? 'text-embedding-3-small' : 'nomic-embed-text';
       const model = await selectEmbeddingModel(baseUrl, undefined, defaultEmbed);
       state.memory.embeddingModel = model;
@@ -442,53 +464,49 @@ async function setupTransports(state: OnboardState): Promise<void> {
 // ── Config generation ─────────────────────────────────────────────────
 
 function generateToml(state: OnboardState): string {
-  const p = state.provider;
-  const providerStr = p.type === 'anthropic' ? 'anthropic' : 'openai-compatible';
+  const models = state.providers.map((p) => {
+    const entry: Record<string, unknown> = {
+      name: p.modelName,
+      provider: p.type === 'anthropic' ? 'anthropic' : 'openai-compatible',
+      model: p.model,
+      tier: p.tier,
+    };
+    if (p.baseUrl) entry.base_url = p.baseUrl;
+    if (p.apiKeyEnv) entry.api_key_env = p.apiKeyEnv;
+    entry.cost_per_1k_input = p.costIn;
+    entry.cost_per_1k_output = p.costOut;
+    entry.use_for = ['general'];
+    return entry;
+  });
 
-  let modelBlock = `\n[[models]]
-name = "${p.modelName}"
-provider = "${providerStr}"
-model = "${p.model}"
-tier = "${p.tier}"`;
+  const config: Record<string, unknown> = {
+    version: '2.0.0',
+    identity: {
+      name: state.identity.name,
+      personality: state.identity.personality,
+    },
+    models,
+    default_model: state.providers[0]?.modelName ?? '',
+    memory: {
+      db_path: 'data/sigil.db',
+      max_recall_results: 5,
+      ...(state.memory.embeddingModel && { embedding_model: state.memory.embeddingModel }),
+      ...(state.memory.embeddingProvider && { embedding_provider: state.memory.embeddingProvider }),
+    },
+    transports: {
+      tui: { enabled: true },
+      web: { enabled: true, port: 3033, host: '127.0.0.1' },
+      telegram: {
+        enabled: state.telegram.enabled,
+        ...(state.telegram.botTokenEnv && { bot_token_env: state.telegram.botTokenEnv }),
+        ...(state.telegram.allowedChatIds && state.telegram.allowedChatIds.length > 0 && {
+          allowed_chat_ids: state.telegram.allowedChatIds,
+        }),
+      },
+    },
+  };
 
-  if (p.baseUrl) modelBlock += `\nbase_url = "${p.baseUrl}"`;
-  if (p.apiKeyEnv) modelBlock += `\napi_key_env = "${p.apiKeyEnv}"`;
-  modelBlock += `\ncost_per_1k_input = ${p.costIn}`;
-  modelBlock += `\ncost_per_1k_output = ${p.costOut}`;
-  modelBlock += `\nuse_for = ["general"]`;
-
-  let memoryBlock = `\n[memory]\ndb_path = "data/sigil.db"\nmax_recall_results = 5`;
-  if (state.memory.embeddingModel) {
-    memoryBlock += `\nembedding_model = "${state.memory.embeddingModel}"`;
-  }
-  if (state.memory.embeddingProvider) {
-    memoryBlock += `\nembedding_provider = "${state.memory.embeddingProvider}"`;
-  }
-
-  return `# Sigil Configuration
-# Generated by onboarding wizard
-
-version = "2.0.0"
-
-[identity]
-name = "${state.identity.name}"
-personality = "${state.identity.personality}"
-${modelBlock}
-
-default_model = "${p.modelName}"
-${memoryBlock}
-
-[transports.tui]
-enabled = true
-
-[transports.web]
-enabled = true
-port = 3033
-host = "127.0.0.1"
-
-[transports.telegram]
-enabled = ${state.telegram.enabled}${state.telegram.botTokenEnv ? `\nbot_token_env = "${state.telegram.botTokenEnv}"` : ''}${state.telegram.allowedChatIds && state.telegram.allowedChatIds.length > 0 ? `\nallowed_chat_ids = [${state.telegram.allowedChatIds.map((id) => `"${id}"`).join(', ')}]` : ''}
-`;
+  return `# Sigil Configuration\n# Generated by onboarding wizard\n\n${TOML.stringify(config as TOML.JsonMap)}`;
 }
 
 function writeConfig(state: OnboardState): void {
@@ -554,10 +572,7 @@ async function main(): Promise<void> {
 
     const state: OnboardState = {
       identity: { name: 'Sigil', personality: '' },
-      provider: {
-        type: 'anthropic', modelName: '', model: '',
-        tier: 'basic', costIn: 0, costOut: 0,
-      },
+      providers: [],
       memory: {},
       telegram: { enabled: false },
       envLines: [],
