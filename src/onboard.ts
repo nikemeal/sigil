@@ -268,19 +268,65 @@ async function setupIdentity(state: OnboardState): Promise<void> {
 }
 
 async function setupProvider(state: OnboardState): Promise<void> {
-  // Clear existing providers when reconfiguring
-  state.providers = [];
-  await addProvider(state);
-
-  // Loop to add more models
-  while (true) {
-    const more = await ask('Add another model? (y/n)', 'n');
-    if (more.toLowerCase() !== 'y') break;
+  if (state.providers.length === 0) {
+    // First run: add from scratch
     await addProvider(state);
+    while (true) {
+      const more = await ask('Add another model? (y/n)', 'n');
+      if (more.toLowerCase() !== 'y') break;
+      await addProvider(state);
+    }
+    return;
   }
 
-  if (state.providers.length > 1) {
-    console.log(chalk.green(`\n  ${state.providers.length} models configured: ${state.providers.map((p) => p.modelName).join(', ')}`));
+  // Re-run: show what's configured, then ask what to do
+  while (true) {
+    console.log(chalk.bold('\nConfigured Models'));
+    for (const p of state.providers) {
+      const provLabel = p.type === 'anthropic' ? 'Anthropic' : p.baseUrl ?? 'OpenAI';
+      console.log(`  ${chalk.cyan('→')} ${p.modelName} — ${provLabel}, ${p.model} (${p.tier})`);
+    }
+
+    const action = await choose('What would you like to do?', [
+      'Add a new model',
+      'Reconfigure an existing model',
+      'Remove a model',
+      'Done — keep as-is',
+    ]);
+
+    if (action.startsWith('Done')) {
+      break;
+
+    } else if (action.startsWith('Add')) {
+      await addProvider(state);
+
+    } else if (action.startsWith('Reconfigure')) {
+      const names = state.providers.map((p) => `${p.modelName} (${p.model})`);
+      const picked = await choose('Which model?', names);
+      const idx = names.indexOf(picked);
+      if (idx >= 0) {
+        console.log(chalk.dim(`\n  Replacing ${state.providers[idx].modelName}...`));
+        const before = state.providers.length;
+        await addProvider(state);
+        // Replace old with new
+        if (state.providers.length > before) {
+          state.providers[idx] = state.providers.pop()!;
+        }
+      }
+
+    } else if (action.startsWith('Remove')) {
+      if (state.providers.length <= 1) {
+        console.log(chalk.yellow('\n  You need at least one model. Add another before removing.'));
+        continue;
+      }
+      const names = state.providers.map((p) => `${p.modelName} (${p.model})`);
+      const picked = await choose('Which model to remove?', names);
+      const idx = names.indexOf(picked);
+      if (idx >= 0) {
+        console.log(chalk.green(`  Removed ${state.providers[idx].modelName}`));
+        state.providers.splice(idx, 1);
+      }
+    }
   }
 }
 
