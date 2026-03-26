@@ -32,6 +32,7 @@ const TOOL_INDICATORS = [
   'remember', 'recall', 'update profile', 'update my profile',
   'uptime', 'disk space', 'disk usage', 'how much space',
   'install', 'restart', 'status of',
+  'working on', 'background task', 'task status', 'any tasks',
 ];
 
 const COMPLEX_INDICATORS = [

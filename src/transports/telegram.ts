@@ -115,7 +115,7 @@ export class TelegramTransport {
 
     // Task events (module 6)
     this.bus.on('task:complete', async ({ taskId, result }) => {
-      await this.broadcastToChats(`📋 Task ${taskId.slice(0, 8)} complete:\n\n${result}`);
+      await this.broadcastToChats(result);
     });
 
     this.bus.on('task:error', async ({ taskId, error }) => {

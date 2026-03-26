@@ -73,7 +73,7 @@ export class TaskRunner {
       const results: string[] = [];
       for (const step of steps) {
         try {
-          const result = await this.executeStep(task, step, results);
+          const result = await this.executeStep(task, step, results, steps.length);
           results.push(result);
         } catch (stepErr) {
           this.store.failStep(step.id, stepErr instanceof Error ? stepErr.message : String(stepErr));
@@ -111,7 +111,7 @@ export class TaskRunner {
   }
 
   /** Execute a single step */
-  private async executeStep(task: Task, step: TaskStep, previousResults: string[]): Promise<string> {
+  private async executeStep(task: Task, step: TaskStep, previousResults: string[], totalSteps: number): Promise<string> {
     console.log(`[TaskRunner] Step ${step.stepNumber}: ${step.description.slice(0, 60)} → ${step.assignedModel}`);
     this.store.startStep(step.id);
 
@@ -121,7 +121,7 @@ export class TaskRunner {
     const provider = this.pool.getProvider(model);
 
     // Build context for this step
-    const systemPrompt = this.buildStepPrompt(task, step, previousResults);
+    const systemPrompt = this.buildStepPrompt(task, step, previousResults, totalSteps);
     const messages = [
       { role: 'system' as const, content: systemPrompt },
       { role: 'user' as const, content: step.description },
@@ -166,7 +166,7 @@ export class TaskRunner {
   }
 
   /** Build a system prompt for a task step */
-  private buildStepPrompt(task: Task, step: TaskStep, previousResults: string[]): string {
+  private buildStepPrompt(task: Task, step: TaskStep, previousResults: string[], totalSteps: number): string {
     const identity = this.config.identity;
     let prompt = `You are ${identity.name}. ${identity.personality}\n\n`;
     prompt += `You are working on a background task. The user's original request was:\n"${task.userMessage}"\n\n`;
@@ -184,6 +184,14 @@ export class TaskRunner {
     }
 
     prompt += `Your current task is step ${step.stepNumber}. Complete it thoroughly and concisely.`;
+
+    // Final step: tell the LLM to reference the original request naturally
+    if (step.stepNumber === totalSteps) {
+      prompt += `\n\nIMPORTANT: This result will be sent directly to the user as a follow-up message. `;
+      prompt += `Start by briefly referencing what they asked about (e.g. "You asked about X — here's what I found"). `;
+      prompt += `Do NOT mention tasks, steps, or background processing. Just deliver the answer naturally.`;
+    }
+
     return prompt;
   }
 

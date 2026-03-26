@@ -123,7 +123,7 @@ export class Gateway {
     const ack: Response = {
       id: randomUUID(),
       messageId: message.id,
-      content: `I'll dig into that and get back to you. (Task ${task.id.slice(0, 8)})`,
+      content: `I'll dig into that and get back to you.`,
       model: 'system',
       timestamp: new Date(),
     };

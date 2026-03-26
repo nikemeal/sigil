@@ -33,6 +33,7 @@ import { ToolRegistry } from './tools/registry.js';
 import { shellExecTool } from './tools/shell.js';
 import { fileReadTool, fileWriteTool, listDirTool } from './tools/file-ops.js';
 import { createMemoryTools } from './tools/memory-tools.js';
+import { createTaskTools } from './tools/task-tools.js';
 import { ProviderPool } from './router/provider-pool.js';
 import { CostTracker } from './router/cost-tracker.js';
 import { TaskStore } from './tasks/store.js';
@@ -111,6 +112,11 @@ async function main(): Promise<void> {
   const scheduler = new Scheduler(bus, taskRunner, taskStore);
   gateway.setTaskComponents(taskStore, scheduler);
   scheduler.start();
+
+  // Register task tools (agent can create/list background tasks)
+  for (const tool of createTaskTools(taskStore, scheduler)) {
+    tools.register(tool);
+  }
 
   // Record background task results in conversation history
   bus.on('task:complete', ({ taskId, result }) => {

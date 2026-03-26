@@ -150,6 +150,14 @@ export class ContextEngine {
     parts.push(`Profile: data/profile.md`);
     parts.push(`When asked about your own files, check the working directory first.`);
 
+    // Background task guidance
+    parts.push(`\n--- Background Tasks ---`);
+    parts.push(`You can create background tasks for complex work using the create_task tool.`);
+    parts.push(`Use it when a request involves research, investigation, multi-step analysis, or anything time-consuming.`);
+    parts.push(`Do NOT use it for simple questions, quick answers, or conversational replies.`);
+    parts.push(`When you create a background task, briefly acknowledge it and let the user know you'll follow up.`);
+    parts.push(`Use list_tasks when the user asks what you're working on or about task status.`);
+
     // Active skills — matched by keyword relevance
     if (currentMessage && this.skills) {
       const matched = this.skills.match(currentMessage);
