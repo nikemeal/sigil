@@ -98,6 +98,7 @@ async function run(): Promise<void> {
           web: { enabled: false, port: 3033, host: '127.0.0.1' },
           telegram: { enabled: false },
         },
+        skills: { path: 'skills' },
       });
       throw new Error('Should have thrown');
     } catch (err) {
@@ -123,6 +124,7 @@ async function run(): Promise<void> {
         web: { enabled: true, port: 13033, host: '127.0.0.1' },
         telegram: { enabled: false },
       },
+      skills: { path: 'skills' },
     };
     const pool = new ProviderPool(config);
     const agent = new Agent(config, bus, pool);
@@ -311,6 +313,7 @@ async function run(): Promise<void> {
       models: [], defaultModel: '',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
 
     const engine = new ContextEngine(config, memories, conversation, profile, null);
@@ -511,6 +514,7 @@ async function run(): Promise<void> {
       models: [], defaultModel: '',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
 
     const memories = new MemoryStore(db);
@@ -562,6 +566,7 @@ async function run(): Promise<void> {
       models: [], defaultModel: '',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
 
     const memories = new MemoryStore(db);
@@ -640,6 +645,7 @@ async function run(): Promise<void> {
       defaultModel: 'local',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
     const router = new Router(config);
 
@@ -661,6 +667,7 @@ async function run(): Promise<void> {
       defaultModel: 'local',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
     const router = new Router(config);
 
@@ -683,6 +690,7 @@ async function run(): Promise<void> {
       defaultModel: 'local',
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
     };
     const router = new Router(config);
 

@@ -64,3 +64,11 @@ host = "127.0.0.1"
 enabled = false
 # bot_token_env = "TELEGRAM_BOT_TOKEN"    # env var containing bot token
 # allowed_chat_ids = ["123456789"]         # restrict to these chat IDs
+
+# ── Skills ──────────────────────────────────────────────────────────
+# Skills are markdown files in the skills/ directory that provide
+# domain knowledge to the agent when relevant to a message.
+# By default all skills are loaded. Uncomment 'enabled' to restrict.
+# [skills]
+# path = "skills"
+# enabled = ["sigil-help"]

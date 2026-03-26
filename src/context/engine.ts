@@ -18,6 +18,7 @@ import { ConversationStore } from './conversation.js';
 import { Profile } from './profile.js';
 import { type EmbeddingProvider } from './embeddings.js';
 import { type TrimConfig } from '../router/trimmer.js';
+import { type SkillLoader } from './skills.js';
 
 export class ContextEngine {
   private config: SigilConfig;
@@ -25,6 +26,7 @@ export class ContextEngine {
   private conversation: ConversationStore;
   private profile: Profile;
   private embeddings: EmbeddingProvider | null;
+  private skills: SkillLoader | null;
 
   constructor(
     config: SigilConfig,
@@ -32,12 +34,14 @@ export class ContextEngine {
     conversation: ConversationStore,
     profile: Profile,
     embeddings: EmbeddingProvider | null,
+    skills?: SkillLoader | null,
   ) {
     this.config = config;
     this.memories = memories;
     this.conversation = conversation;
     this.profile = profile;
     this.embeddings = embeddings;
+    this.skills = skills ?? null;
   }
 
   /**
@@ -145,6 +149,17 @@ export class ContextEngine {
     parts.push(`Database: ${this.config.memory.dbPath}`);
     parts.push(`Profile: data/profile.md`);
     parts.push(`When asked about your own files, check the working directory first.`);
+
+    // Active skills — matched by keyword relevance
+    if (currentMessage && this.skills) {
+      const matched = this.skills.match(currentMessage);
+      if (matched.length > 0) {
+        const skillsText = matched
+          .map((s) => `### ${s.name}\n${s.content}`)
+          .join('\n\n');
+        parts.push(`\n--- Active Skills ---\n${skillsText}`);
+      }
+    }
 
     // Living profile
     const profileContent = this.profile.get();

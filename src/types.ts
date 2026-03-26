@@ -173,6 +173,13 @@ export interface TransportsConfig {
   };
 }
 
+export interface SkillsConfig {
+  /** Directory path relative to project root (default: "skills") */
+  path: string;
+  /** List of enabled skill names. If undefined, all skills are enabled. */
+  enabled?: string[];
+}
+
 export interface SigilConfig {
   version: string;
   identity: IdentityConfig;
@@ -180,6 +187,7 @@ export interface SigilConfig {
   defaultModel: string;
   memory: MemoryConfig;
   transports: TransportsConfig;
+  skills: SkillsConfig;
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import { ConversationStore } from './context/conversation.js';
 import { Profile } from './context/profile.js';
 import { ContextEngine } from './context/engine.js';
 import { createEmbeddingProvider } from './context/embeddings.js';
+import { SkillLoader } from './context/skills.js';
 import { TelegramTransport } from './transports/telegram.js';
 import { ToolRegistry } from './tools/registry.js';
 import { shellExecTool } from './tools/shell.js';
@@ -71,8 +72,15 @@ async function main(): Promise<void> {
     console.log(`[Sigil] Embeddings: ${config.memory.embeddingModel}`);
   }
 
+  // Create skill loader
+  const skillLoader = new SkillLoader(config.skills);
+  const discoveredSkills = skillLoader.loadAll();
+  if (discoveredSkills.length > 0) {
+    console.log(`[Sigil] Skills: ${discoveredSkills.map((s) => s.name).join(', ')}`);
+  }
+
   // Create context engine
-  const context = new ContextEngine(config, memories, conversation, profile, embeddings);
+  const context = new ContextEngine(config, memories, conversation, profile, embeddings, skillLoader);
 
   // Create cost tracker
   const costTracker = new CostTracker(db);

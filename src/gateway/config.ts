@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as TOML from '@iarna/toml';
-import type { SigilConfig, ModelConfig, MemoryConfig } from '../types.js';
+import type { SigilConfig, ModelConfig, MemoryConfig, SkillsConfig } from '../types.js';
 
 /** Where we look for config, relative to project root */
 const CONFIG_PATH = resolve(process.cwd(), 'sigil.toml');
@@ -33,6 +33,9 @@ const DEFAULTS: SigilConfig = {
     tui: { enabled: true },
     web: { enabled: true, port: 3033, host: '127.0.0.1' },
     telegram: { enabled: false, botTokenEnv: undefined, allowedChatIds: undefined },
+  },
+  skills: {
+    path: 'skills',
   },
 };
 
@@ -71,6 +74,7 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
   const identity = parsed.identity as Record<string, unknown> | undefined;
   const memory = parsed.memory as Record<string, unknown> | undefined;
   const transports = parsed.transports as Record<string, unknown> | undefined;
+  const skills = parsed.skills as Record<string, unknown> | undefined;
   const web = transports?.web as Record<string, unknown> | undefined;
   const telegram = transports?.telegram as Record<string, unknown> | undefined;
 
@@ -111,6 +115,10 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
         allowedChatIds: parseChatIds(telegram?.allowed_chat_ids),
       },
     },
+    skills: {
+      path: (skills?.path as string) ?? DEFAULTS.skills.path,
+      enabled: parseStringArray(skills?.enabled),
+    },
   };
 }
 
@@ -121,6 +129,17 @@ function parseChatIds(raw: unknown): string[] | undefined {
     const ids = raw.map((id) => String(id)).filter(Boolean);
     return ids.length > 0 ? ids : undefined;
   }
+  return undefined;
+}
+
+/** Parse a TOML value that should be a string array (handles bare string too) */
+function parseStringArray(raw: unknown): string[] | undefined {
+  if (!raw) return undefined;
+  if (Array.isArray(raw)) {
+    const items = raw.map((s) => String(s)).filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof raw === 'string') return [raw];
   return undefined;
 }
 
