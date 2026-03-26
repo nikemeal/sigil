@@ -8,7 +8,7 @@
  *
  * Trimming rules:
  *   chat:     identity + profile, last 5 messages, no tools
- *   question: identity + profile, memories, last 5 messages, no tools
+ *   question: identity + profile, memories, last 5 messages, all tools
  *   tool:     full system prompt, memories, last 10 messages, relevant tools
  *   complex:  full system prompt, all memories, full history, all tools
  */
@@ -34,7 +34,7 @@ const TRIM_RULES: Record<RequestType, TrimConfig> = {
   question: {
     maxHistory: 5,
     includeMemories: true,
-    includeTools: false,
+    includeTools: true,
     maxTools: 0,
   },
   tool: {
