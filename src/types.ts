@@ -227,6 +227,20 @@ export interface TaskStep {
 }
 
 // ---------------------------------------------------------------------------
+// Health Monitoring (module 8)
+// ---------------------------------------------------------------------------
+
+export type ComponentStatus = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+
+export interface HealthCheckResult {
+  component: string;
+  status: ComponentStatus;
+  message?: string;
+  latencyMs?: number;
+  checkedAt: Date;
+}
+
+// ---------------------------------------------------------------------------
 // Event Bus — typed events for inter-component communication
 // ---------------------------------------------------------------------------
 
@@ -261,6 +275,10 @@ export interface EventMap {
   'task:step_complete': { taskId: string; step: TaskStep };
   'task:complete': { taskId: string; result: string; cost: number };
   'task:error': { taskId: string; error: string };
+
+  // Health events (module 8)
+  'health:check_complete': { results: HealthCheckResult[]; timestamp: Date };
+  'health:reconnect_requested': { transport: string };
 
   // Broadcast — send to all connected transports
   'broadcast:response': Response;

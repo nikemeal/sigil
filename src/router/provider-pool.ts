@@ -43,6 +43,11 @@ export class ProviderPool {
     return [...this.providers.keys()];
   }
 
+  /** Get provider by model name */
+  getProviderByName(name: string): LLMProvider | undefined {
+    return this.providers.get(name);
+  }
+
   /** Get number of configured providers */
   get size(): number {
     return this.providers.size;

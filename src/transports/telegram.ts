@@ -121,6 +121,20 @@ export class TelegramTransport {
     this.bus.on('task:error', async ({ taskId, error }) => {
       await this.broadcastToChats(`⚠️ Task ${taskId.slice(0, 8)} failed: ${error}`);
     });
+
+    // Health reconnect (module 8)
+    this.bus.on('health:reconnect_requested', async ({ transport }) => {
+      if (transport !== 'telegram') return;
+      console.log('[Telegram] Reconnect requested by health monitor');
+      try {
+        await this.stop();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await this.start();
+      } catch (err) {
+        console.error('[Telegram] Reconnect failed:', (err as Error).message);
+        this.bus.emit('system:error', { component: 'transport:telegram', error: (err as Error).message });
+      }
+    });
   }
 
   /** Send a message to all active Telegram chats */

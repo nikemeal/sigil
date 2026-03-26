@@ -40,6 +40,8 @@ import { TaskStore } from './tasks/store.js';
 import { Planner } from './tasks/planner.js';
 import { TaskRunner } from './tasks/runner.js';
 import { Scheduler } from './tasks/scheduler.js';
+import { HealthMonitor } from './health/monitor.js';
+import { createHealthTools } from './tools/health-tools.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -141,6 +143,15 @@ async function main(): Promise<void> {
     }
   }
 
+  // Create health monitor (module 8)
+  const healthMonitor = new HealthMonitor(bus, pool, db, dbPath);
+  healthMonitor.start();
+
+  // Register health tools
+  for (const tool of createHealthTools(healthMonitor)) {
+    tools.register(tool);
+  }
+
   // Signal ready
   bus.emit('system:ready', { timestamp: new Date() });
   console.log('[Sigil] Ready.');
@@ -149,6 +160,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`\n[Sigil] Received ${signal}, shutting down...`);
     bus.emit('system:shutdown', { reason: signal });
+    healthMonitor.stop();
     scheduler.stop();
     if (telegramTransport) await telegramTransport.stop();
     await wsServer.stop();

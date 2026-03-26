@@ -33,6 +33,7 @@ const TOOL_INDICATORS = [
   'uptime', 'disk space', 'disk usage', 'how much space',
   'install', 'restart', 'status of',
   'working on', 'background task', 'task status', 'any tasks',
+  'health', 'system status', 'diagnostics',
 ];
 
 const COMPLEX_INDICATORS = [
