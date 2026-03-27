@@ -241,6 +241,21 @@ export interface HealthCheckResult {
 }
 
 // ---------------------------------------------------------------------------
+// Learning — technique store (module 11)
+// ---------------------------------------------------------------------------
+
+export interface TechniqueResult {
+  id: string;
+  pattern: string;
+  technique: string;
+  outcome?: string;
+  source: 'explicit' | 'auto';
+  usageCount: number;
+  createdAt: string;
+  lastUsed?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Event Bus — typed events for inter-component communication
 // ---------------------------------------------------------------------------
 
@@ -273,7 +288,7 @@ export interface EventMap {
   'task:created': { task: Task };
   'task:started': { taskId: string };
   'task:step_complete': { taskId: string; step: TaskStep };
-  'task:complete': { taskId: string; result: string; cost: number };
+  'task:complete': { taskId: string; userMessage: string; result: string; cost: number };
   'task:error': { taskId: string; error: string };
 
   // Health events (module 8)
@@ -289,6 +304,10 @@ export interface EventMap {
   'extension:tool_created': { name: string; path: string };
   'extension:tool_removed': { name: string; reason: string };
   'extension:skill_created': { name: string; path: string };
+
+  // Learning events (module 11)
+  'learning:technique_captured': { id: string; pattern: string; source: 'explicit' | 'auto' };
+  'learning:technique_used': { ids: string[]; query: string };
 
   // Broadcast — send to all connected transports
   'broadcast:response': Response;

@@ -861,6 +861,25 @@ async function run(): Promise<void> {
     if (!Array.isArray(tools)) throw new Error('Should return an array');
   });
 
+  // ── Module 11: Learning ────────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 11: Learning'));
+
+  await test('TechniqueResult type is exported', async () => {
+    const types = await import('./types.js');
+    if (!types) throw new Error('Failed to import types');
+    // Type-level check — if TechniqueResult is exported, this compiles
+    const t: import('./types.js').TechniqueResult = {
+      id: 'test-id',
+      pattern: 'test pattern',
+      technique: 'test technique',
+      source: 'explicit',
+      usageCount: 0,
+      createdAt: new Date().toISOString(),
+    };
+    if (!t.id) throw new Error('TechniqueResult not valid');
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;

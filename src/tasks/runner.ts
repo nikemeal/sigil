@@ -96,6 +96,7 @@ export class TaskRunner {
 
       this.bus.emit('task:complete', {
         taskId: task.id,
+        userMessage: task.userMessage,
         result: finalResult,
         cost: updated.totalCost,
       });
