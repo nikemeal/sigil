@@ -36,6 +36,8 @@ const TOOL_INDICATORS = [
   'health', 'system status', 'diagnostics',
   'patch', 'override', 'source code', 'read source',
   'self repair', 'self-repair', 'diagnose', 'fix this',
+  'create a tool', 'build a tool', 'new tool', 'custom tool',
+  'create a skill', 'new skill',
 ];
 
 const COMPLEX_INDICATORS = [

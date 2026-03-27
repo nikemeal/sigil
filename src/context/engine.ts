@@ -169,6 +169,10 @@ export class ContextEngine {
     parts.push(`3. Use apply_patch to write a fix (compilation is validated automatically)`);
     parts.push(`4. If the patch fails compilation, read the error and try again (max 3 attempts)`);
     parts.push(`Use list_overrides to see active patches. Use remove_override to clean up patches no longer needed.`);
+    parts.push(`You can also create new tools and skills to extend your capabilities.`);
+    parts.push(`Use create_tool when you need a capability you don't have (API calls, data processing, etc.).`);
+    parts.push(`Use create_skill to save reusable knowledge or workflows.`);
+    parts.push(`Use list_custom_tools to see tools you've previously created.`);
 
     // Active skills — matched by keyword relevance
     if (currentMessage && this.skills) {

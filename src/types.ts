@@ -285,6 +285,11 @@ export interface EventMap {
   'diagnosis:patch_removed': { modulePath: string; reason: string };
   'diagnosis:patch_failed': { modulePath: string; error: string };
 
+  // Extension events (module 10)
+  'extension:tool_created': { name: string; path: string };
+  'extension:tool_removed': { name: string; reason: string };
+  'extension:skill_created': { name: string; path: string };
+
   // Broadcast — send to all connected transports
   'broadcast:response': Response;
   'broadcast:notification': { content: string; severity: 'info' | 'warn' | 'error' };

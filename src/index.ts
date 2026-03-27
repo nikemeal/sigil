@@ -43,6 +43,8 @@ import { Scheduler } from './tasks/scheduler.js';
 import { HealthMonitor } from './health/monitor.js';
 import { createHealthTools } from './tools/health-tools.js';
 import { createDiagnosisTools } from './tools/diagnosis-tools.js';
+import { loadLocalTools } from './lib/tool-loader.js';
+import { createExtensionTools } from './tools/extension-tools.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -167,6 +169,25 @@ async function main(): Promise<void> {
   });
   bus.on('diagnosis:patch_failed', ({ modulePath, error }) => {
     console.warn(`[Diagnosis] Patch failed: ${modulePath} — ${error}`);
+  });
+
+  // Load agent-created tools from local/tools/ (module 10)
+  const localTools = await loadLocalTools();
+  for (const tool of localTools) {
+    tools.register(tool);
+  }
+
+  // Register extension tools (module 10)
+  for (const tool of createExtensionTools(bus, tools)) {
+    tools.register(tool);
+  }
+
+  // Extension audit logging
+  bus.on('extension:tool_created', ({ name, path }) => {
+    console.log(`[Extension] Tool created: ${name} → ${path}`);
+  });
+  bus.on('extension:skill_created', ({ name, path }) => {
+    console.log(`[Extension] Skill created: ${name} → ${path}`);
   });
 
   // Signal ready

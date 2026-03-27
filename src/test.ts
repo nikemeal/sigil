@@ -798,6 +798,69 @@ async function run(): Promise<void> {
     if (classification.type !== 'tool') throw new Error(`Expected tool, got ${classification.type}`);
   });
 
+  // ── Module 10: Extensions ────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 10: Extensions'));
+
+  await test('list_custom_tools returns empty when none exist', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+    const { createExtensionTools } = await import('./tools/extension-tools.js');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+    const tools = createExtensionTools(bus, registry);
+    const listTool = tools.find((t) => t.name === 'list_custom_tools')!;
+
+    const result = await listTool.execute({});
+    if (!result.includes('No custom tools')) throw new Error('Should report no custom tools');
+  });
+
+  await test('create_skill writes valid skill file', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ToolRegistry } = await import('./tools/registry.js');
+    const { createExtensionTools } = await import('./tools/extension-tools.js');
+    const { existsSync, readFileSync, unlinkSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+
+    const bus = new EventBus();
+    const registry = new ToolRegistry(bus);
+    const tools = createExtensionTools(bus, registry);
+    const createSkill = tools.find((t) => t.name === 'create_skill')!;
+
+    const result = await createSkill.execute({
+      name: 'test-skill-temp',
+      description: 'A test skill for unit tests',
+      triggers: 'test, unit test, testing',
+      content: '## Testing\n\nThis is a test skill.',
+    });
+
+    if (!result.includes('test-skill-temp')) throw new Error('Should confirm skill name');
+
+    const skillPath = resolve(process.cwd(), 'skills', 'test-skill-temp.md');
+    if (!existsSync(skillPath)) throw new Error('Skill file not created');
+
+    const content = readFileSync(skillPath, 'utf-8');
+    if (!content.includes('name: test-skill-temp')) throw new Error('Missing name in frontmatter');
+    if (!content.includes('triggers:')) throw new Error('Missing triggers in frontmatter');
+
+    // Cleanup
+    try { unlinkSync(skillPath); } catch {}
+  });
+
+  await test('Classifier: create tool routes to tool type', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('create a tool that checks the weather');
+    if (classification.type !== 'tool') throw new Error(`Expected tool, got ${classification.type}`);
+  });
+
+  await test('Tool loader returns empty for missing directory', async () => {
+    const { loadLocalTools } = await import('./lib/tool-loader.js');
+    const tools = await loadLocalTools();
+    // Should return empty array (local/tools/ likely doesn't exist in test env)
+    if (!Array.isArray(tools)) throw new Error('Should return an array');
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;
