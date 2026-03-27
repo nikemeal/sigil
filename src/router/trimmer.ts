@@ -41,7 +41,7 @@ const TRIM_RULES: Record<RequestType, TrimConfig> = {
     maxHistory: 10,
     includeMemories: true,
     includeTools: true,
-    maxTools: 5,
+    maxTools: 0,
   },
   complex: {
     maxHistory: 20,

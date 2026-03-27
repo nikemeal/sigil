@@ -93,6 +93,7 @@ export class Agent {
       let round = 0;
       let currentMessages = [...llmMessages];
       let totalUsage = { inputTokens: 0, outputTokens: 0 };
+      let lastToolResult = '';
 
       while (round < MAX_TOOL_ROUNDS) {
         const completion = await provider.complete({
@@ -106,6 +107,13 @@ export class Agent {
 
         // No tool calls — we're done
         if (!completion.toolCalls || completion.toolCalls.length === 0) {
+          // Guard against empty responses — use last tool result if LLM returns nothing
+          let finalContent = completion.content;
+          if (!finalContent?.trim() && lastToolResult) {
+            console.log('[Agent] Empty response after tool use, using last tool result');
+            finalContent = lastToolResult;
+          }
+
           // Track cost
           if (this.costTracker) {
             this.costTracker.log(
@@ -119,11 +127,11 @@ export class Agent {
           }
 
           const response = this.buildResponse(
-            message.id, completion.content, decision.model.model, totalUsage,
+            message.id, finalContent, decision.model.model, totalUsage,
           );
 
           if (this.context) {
-            this.context.recordMessage(response.id, 'assistant', completion.content);
+            this.context.recordMessage(response.id, 'assistant', finalContent);
           }
 
           this.bus.emit('message:complete', response);
@@ -147,6 +155,7 @@ export class Agent {
             : `Error: No tool registry available.`;
 
           console.log(`[Agent] Result: ${result.slice(0, 100)}${result.length > 100 ? '...' : ''}`);
+          lastToolResult = result;
 
           const toolMsg: LLMMessage = {
             role: 'tool',
