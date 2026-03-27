@@ -34,12 +34,14 @@ const TOOL_INDICATORS = [
   'install', 'restart', 'status of',
   'working on', 'background task', 'task status', 'any tasks',
   'health', 'system status', 'diagnostics',
+  'patch', 'override', 'source code', 'read source',
+  'self repair', 'self-repair', 'diagnose', 'fix this',
 ];
 
 const COMPLEX_INDICATORS = [
   'explain', 'analyse', 'analyze', 'compare', 'evaluate',
   'write code', 'build', 'create a', 'design', 'architect',
-  'review', 'refactor', 'debug', 'fix this', 'why does',
+  'review', 'refactor', 'debug', 'why does',
   'step by step', 'in detail', 'comprehensive',
   'plan', 'strategy', 'how would you', 'what approach',
   'summarise', 'summarize', 'essay', 'article', 'report',

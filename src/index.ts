@@ -42,6 +42,7 @@ import { TaskRunner } from './tasks/runner.js';
 import { Scheduler } from './tasks/scheduler.js';
 import { HealthMonitor } from './health/monitor.js';
 import { createHealthTools } from './tools/health-tools.js';
+import { createDiagnosisTools } from './tools/diagnosis-tools.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -151,6 +152,22 @@ async function main(): Promise<void> {
   for (const tool of createHealthTools(healthMonitor)) {
     tools.register(tool);
   }
+
+  // Register diagnosis tools (module 9)
+  for (const tool of createDiagnosisTools(bus)) {
+    tools.register(tool);
+  }
+
+  // Diagnosis audit logging
+  bus.on('diagnosis:patch_applied', ({ modulePath, reason }) => {
+    console.log(`[Diagnosis] Patch applied: ${modulePath} — ${reason}`);
+  });
+  bus.on('diagnosis:patch_removed', ({ modulePath, reason }) => {
+    console.log(`[Diagnosis] Patch removed: ${modulePath} — ${reason}`);
+  });
+  bus.on('diagnosis:patch_failed', ({ modulePath, error }) => {
+    console.warn(`[Diagnosis] Patch failed: ${modulePath} — ${error}`);
+  });
 
   // Signal ready
   bus.emit('system:ready', { timestamp: new Date() });

@@ -158,6 +158,18 @@ export class ContextEngine {
     parts.push(`When you create a background task, briefly acknowledge it and let the user know you'll follow up.`);
     parts.push(`Use list_tasks when the user asks what you're working on or about task status.`);
 
+    // Self-sufficiency directives (module 9)
+    parts.push(`\n--- Self-Sufficiency ---`);
+    parts.push(`You are a self-sufficient agent. You can read, understand, and modify your own source code.`);
+    parts.push(`Your codebase lives in src/. You NEVER modify files in src/ directly — that's upstream code.`);
+    parts.push(`Instead, write fixes to local/src/ using the apply_patch tool. The module loader checks local/src/ first, so your patches take effect on restart.`);
+    parts.push(`When you encounter an error or something isn't working:`);
+    parts.push(`1. Use read_source to examine the relevant code`);
+    parts.push(`2. Diagnose the issue`);
+    parts.push(`3. Use apply_patch to write a fix (compilation is validated automatically)`);
+    parts.push(`4. If the patch fails compilation, read the error and try again (max 3 attempts)`);
+    parts.push(`Use list_overrides to see active patches. Use remove_override to clean up patches no longer needed.`);
+
     // Active skills — matched by keyword relevance
     if (currentMessage && this.skills) {
       const matched = this.skills.match(currentMessage);

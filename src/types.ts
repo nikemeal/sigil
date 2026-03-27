@@ -280,6 +280,11 @@ export interface EventMap {
   'health:check_complete': { results: HealthCheckResult[]; timestamp: Date };
   'health:reconnect_requested': { transport: string };
 
+  // Diagnosis events (module 9)
+  'diagnosis:patch_applied': { modulePath: string; reason: string };
+  'diagnosis:patch_removed': { modulePath: string; reason: string };
+  'diagnosis:patch_failed': { modulePath: string; error: string };
+
   // Broadcast — send to all connected transports
   'broadcast:response': Response;
   'broadcast:notification': { content: string; severity: 'info' | 'warn' | 'error' };

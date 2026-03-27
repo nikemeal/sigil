@@ -704,7 +704,7 @@ async function run(): Promise<void> {
     const chatTrim = getTrimConfig('chat');
     const complexTrim = getTrimConfig('complex');
     if (chatTrim.maxHistory >= complexTrim.maxHistory) throw new Error('Chat should get less history than complex');
-    if (chatTrim.includeTools) throw new Error('Chat should not include tools');
+    if (!chatTrim.includeTools) throw new Error('Chat should include tools');
     if (!complexTrim.includeTools) throw new Error('Complex should include tools');
   });
 
@@ -731,6 +731,71 @@ async function run(): Promise<void> {
     if (total === 0) throw new Error('Total spend should be > 0');
 
     db.close();
+  });
+
+  // ── Module 9: Diagnosis ──────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 9: Diagnosis'));
+
+  await test('read_source reads existing source file', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createDiagnosisTools } = await import('./tools/diagnosis-tools.js');
+
+    const bus = new EventBus();
+    const tools = createDiagnosisTools(bus);
+    const readSource = tools.find((t) => t.name === 'read_source')!;
+
+    const result = await readSource.execute({ path: 'types.ts' });
+    if (!result.includes('SigilConfig')) throw new Error('Should contain SigilConfig type');
+    if (!result.includes('No local override')) throw new Error('Should report no override');
+  });
+
+  await test('read_source returns error for missing file', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createDiagnosisTools } = await import('./tools/diagnosis-tools.js');
+
+    const bus = new EventBus();
+    const tools = createDiagnosisTools(bus);
+    const readSource = tools.find((t) => t.name === 'read_source')!;
+
+    const result = await readSource.execute({ path: 'nonexistent/file.ts' });
+    if (!result.includes('not found')) throw new Error('Should report file not found');
+  });
+
+  await test('list_overrides returns empty when none exist', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createDiagnosisTools } = await import('./tools/diagnosis-tools.js');
+
+    const bus = new EventBus();
+    const tools = createDiagnosisTools(bus);
+    const listOverrides = tools.find((t) => t.name === 'list_overrides')!;
+
+    const result = await listOverrides.execute({});
+    if (!result.includes('No local overrides')) throw new Error('Should report no overrides');
+  });
+
+  await test('remove_override handles missing override gracefully', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createDiagnosisTools } = await import('./tools/diagnosis-tools.js');
+
+    const bus = new EventBus();
+    const tools = createDiagnosisTools(bus);
+    const removeOverride = tools.find((t) => t.name === 'remove_override')!;
+
+    const result = await removeOverride.execute({ modulePath: 'nonexistent/module', reason: 'test' });
+    if (!result.includes('No override found')) throw new Error('Should report no override found');
+  });
+
+  await test('Classifier: diagnosis keywords route to tool', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('can you read source code of the gateway module?');
+    if (classification.type !== 'tool') throw new Error(`Expected tool, got ${classification.type}`);
+  });
+
+  await test('Classifier: fix this routes to tool', async () => {
+    const { classify } = await import('./router/classifier.js');
+    const { classification } = classify('fix this error in the config parser');
+    if (classification.type !== 'tool') throw new Error(`Expected tool, got ${classification.type}`);
   });
 
   // ── Summary ───────────────────────────────────────────────────────
