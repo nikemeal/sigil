@@ -181,5 +181,42 @@ function migrate(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
+
+    -- Learned techniques (Module 11)
+    CREATE TABLE IF NOT EXISTS techniques (
+      integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT UNIQUE NOT NULL,
+      pattern TEXT NOT NULL,
+      technique TEXT NOT NULL,
+      outcome TEXT,
+      source TEXT NOT NULL DEFAULT 'explicit',
+      usage_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_used TEXT
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS techniques_fts USING fts5(
+      pattern,
+      technique,
+      content='techniques',
+      content_rowid='integer_id'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS techniques_ai AFTER INSERT ON techniques BEGIN
+      INSERT INTO techniques_fts(rowid, pattern, technique)
+      VALUES (new.integer_id, new.pattern, new.technique);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS techniques_ad AFTER DELETE ON techniques BEGIN
+      INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+      VALUES ('delete', old.integer_id, old.pattern, old.technique);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS techniques_au AFTER UPDATE ON techniques BEGIN
+      INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+      VALUES ('delete', old.integer_id, old.pattern, old.technique);
+      INSERT INTO techniques_fts(rowid, pattern, technique)
+      VALUES (new.integer_id, new.pattern, new.technique);
+    END;
   `);
 }

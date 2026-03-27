@@ -53,6 +53,26 @@ export class ProviderPool {
     return this.providers.size;
   }
 
+  /**
+   * Return the provider and config for the cheapest available model.
+   * Picks by tier order: minimal < basic < standard < full.
+   * Returns null if no providers are configured.
+   */
+  getCheapest(): { provider: LLMProvider; model: ModelConfig } | null {
+    const tierOrder: import('../types.js').ModelTier[] = ['minimal', 'basic', 'standard', 'full'];
+    let best: { provider: LLMProvider; model: ModelConfig } | null = null;
+
+    for (const [name, model] of this.models) {
+      const provider = this.providers.get(name);
+      if (!provider) continue;
+      if (!best || tierOrder.indexOf(model.tier) < tierOrder.indexOf(best.model.tier)) {
+        best = { provider, model };
+      }
+    }
+
+    return best;
+  }
+
   private createProvider(model: ModelConfig): LLMProvider {
     switch (model.provider) {
       case 'anthropic': {

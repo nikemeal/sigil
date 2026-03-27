@@ -880,6 +880,48 @@ async function run(): Promise<void> {
     if (!t.id) throw new Error('TechniqueResult not valid');
   });
 
+  await test('Techniques table exists after migration', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS techniques_fts USING fts5(
+        pattern,
+        technique,
+        content='techniques',
+        content_rowid='integer_id'
+      );
+    `);
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as Array<{ name: string }>;
+    const tableNames = tables.map((t) => t.name);
+    if (!tableNames.includes('techniques')) throw new Error('Missing techniques table');
+    db.close();
+  });
+
+  await test('ProviderPool.getCheapest() returns null when empty', async () => {
+    const { ProviderPool } = await import('./router/provider-pool.js');
+    const pool = new ProviderPool({
+      version: '2.0.0',
+      identity: { name: 'test', personality: 'test' },
+      models: [],
+      defaultModel: '',
+      memory: { dbPath: 'data/sigil.db', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
+    });
+    const result = pool.getCheapest();
+    if (result !== null) throw new Error(`Expected null, got ${JSON.stringify(result)}`);
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;
