@@ -23,12 +23,14 @@ interface ServerMessage {
   model?: string;
   messageId?: string;
   severity?: string;
+  status?: string;
+  tool?: string;
 }
 
 // Config — in module 1 this is hardcoded, later reads from sigil.toml
 const WS_URL = process.env.SIGIL_WS_URL ?? 'ws://127.0.0.1:3033/ws';
 
-const SPINNER = ['   thinking', '.  thinking', '.. thinking', '...thinking'];
+const DOTS = ['   ', '.  ', '.. ', '...'];
 
 function main(): void {
   console.log(chalk.dim(`Connecting to ${WS_URL}...`));
@@ -38,6 +40,7 @@ function main(): void {
   let waiting = false;
   let spinnerInterval: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame = 0;
+  let spinnerLabel = 'thinking';
 
   const rl = createInterface({
     input: process.stdin,
@@ -48,11 +51,17 @@ function main(): void {
   function startSpinner(): void {
     waiting = true;
     spinnerFrame = 0;
-    process.stdout.write(chalk.dim(SPINNER[0]));
+    spinnerLabel = 'thinking';
+    process.stdout.write(chalk.dim(`${DOTS[0]}${spinnerLabel}`));
     spinnerInterval = setInterval(() => {
-      spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
-      process.stdout.write(`\r\x1b[K${chalk.dim(SPINNER[spinnerFrame])}`);
+      spinnerFrame = (spinnerFrame + 1) % DOTS.length;
+      process.stdout.write(`\r\x1b[K${chalk.dim(`${DOTS[spinnerFrame]}${spinnerLabel}`)}`);
     }, 400);
+  }
+
+  function updateSpinner(label: string): void {
+    spinnerLabel = label;
+    process.stdout.write(`\r\x1b[K${chalk.dim(`${DOTS[spinnerFrame]}${spinnerLabel}`)}`);
   }
 
   function stopSpinner(): void {
@@ -75,8 +84,13 @@ function main(): void {
     try {
       const data = JSON.parse(raw.toString()) as ServerMessage;
 
-      // Ignore status messages — we handle flow with waiting flag
-      if (data.type === 'status') return;
+      // Status messages update the spinner label
+      if (data.type === 'status') {
+        if (data.status === 'tool_calling' && data.tool && waiting) {
+          updateSpinner(`using ${data.tool}`);
+        }
+        return;
+      }
 
       stopSpinner();
 

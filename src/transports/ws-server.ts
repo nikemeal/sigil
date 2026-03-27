@@ -31,8 +31,9 @@ interface ServerMessage {
   model?: string;
   messageId?: string;
   severity?: string;
-  status?: 'queued' | 'processing';
+  status?: 'queued' | 'processing' | 'tool_calling';
   position?: number;
+  tool?: string;
 }
 
 export class WSServer {
@@ -124,6 +125,16 @@ export class WSServer {
         content: '',
         messageId: data.messageId,
         status: 'processing',
+      });
+    });
+
+    this.bus.on('tool:calling', ({ messageId, tool }) => {
+      this.broadcast({
+        type: 'status',
+        content: '',
+        messageId,
+        status: 'tool_calling',
+        tool,
       });
     });
 
