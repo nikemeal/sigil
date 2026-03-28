@@ -212,11 +212,7 @@ export class ContextEngine {
 
     // Inject relevant techniques (skip if no store configured)
     if (this.techniques) {
-      let techniqueResults = this.techniques.search(currentMessage, 3);
-      // Fall back to most-used techniques when keyword search finds nothing
-      if (techniqueResults.length === 0) {
-        techniqueResults = this.techniques.list().slice(0, 3);
-      }
+      const techniqueResults = this.techniques.search(currentMessage, 3);
       if (techniqueResults.length > 0) {
         const ids = techniqueResults.map((t) => t.id);
         const techniqueText = techniqueResults

@@ -1276,18 +1276,18 @@ async function run(): Promise<void> {
     const store = new TechniqueStore(db);
     const bus = new EventBus();
 
-    store.add('data analysis', 'Check for missing values before computing averages', undefined, 'auto');
+    store.add('summarise tasks', 'Start with the key point, then supporting evidence', undefined, 'auto');
 
     const engine = new ContextEngine(config, memories, conversation, profile, null, null, bus, store);
 
-    const message = { id: 'test', content: 'analyse this dataset', source: 'tui' as const, timestamp: new Date() };
+    const message = { id: 'test', content: 'summarise this document', source: 'tui' as const, timestamp: new Date() };
     const context = await engine.buildContext(message);
     const systemPrompt = context[0].content as string;
 
     if (!systemPrompt.includes('Techniques from past experience')) {
       throw new Error('Techniques section missing from system prompt');
     }
-    if (!systemPrompt.includes('data analysis')) {
+    if (!systemPrompt.includes('summarise tasks')) {
       throw new Error('Technique content missing from system prompt');
     }
 
