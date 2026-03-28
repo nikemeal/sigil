@@ -1136,6 +1136,94 @@ async function run(): Promise<void> {
     db.close();
   });
 
+  await test('Learning tools: reflect stores a technique', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createLearningTools } = await import('./tools/learning-tools.js');
+
+    const bus = new EventBus();
+    const store = new TechniqueStore(db);
+    const tools = createLearningTools(bus, store);
+
+    const reflectTool = tools.find((t) => t.name === 'reflect');
+    if (!reflectTool) throw new Error('reflect tool not found');
+
+    const result = await reflectTool.execute({
+      pattern: 'code reviews',
+      technique: 'Always check for error handling first',
+      outcome: 'Caught 3 missing error handlers',
+    });
+
+    if (!result.includes('Stored')) throw new Error(`Unexpected result: ${result}`);
+
+    const all = store.list();
+    if (all.length !== 1) throw new Error(`Expected 1, got ${all.length}`);
+    if (all[0].source !== 'explicit') throw new Error('Wrong source');
+
+    db.close();
+  });
+
+  await test('Learning tools: list_techniques returns stored techniques', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { createLearningTools } = await import('./tools/learning-tools.js');
+
+    const bus = new EventBus();
+    const store = new TechniqueStore(db);
+    store.add('testing', 'Write edge cases first', undefined, 'auto');
+
+    const tools = createLearningTools(bus, store);
+    const listTool = tools.find((t) => t.name === 'list_techniques');
+    if (!listTool) throw new Error('list_techniques tool not found');
+
+    const result = await listTool.execute({});
+    if (!result.includes('testing')) throw new Error(`Expected "testing" in result: ${result}`);
+
+    db.close();
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;
