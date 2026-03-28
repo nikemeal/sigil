@@ -1224,6 +1224,76 @@ async function run(): Promise<void> {
     db.close();
   });
 
+  await test('ContextEngine injects techniques into system prompt', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL DEFAULT 'fact', content TEXT NOT NULL, tags TEXT, relevance REAL NOT NULL DEFAULT 1.0, access_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_accessed TEXT NOT NULL);
+      CREATE VIRTUAL TABLE memories_fts USING fts5(content, tags, content='memories', content_rowid='id');
+      CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags) VALUES (new.id, new.content, new.tags); END;
+      CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags) VALUES ('delete', old.id, old.content, old.tags); END;
+      CREATE TABLE embeddings (memory_id INTEGER PRIMARY KEY, vector BLOB NOT NULL, model TEXT NOT NULL, dimensions INTEGER NOT NULL);
+      CREATE TABLE summaries (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, message_range_start TEXT NOT NULL, message_range_end TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, source TEXT, timestamp TEXT NOT NULL, token_count INTEGER);
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+    `);
+
+    const { MemoryStore } = await import('./context/memory.js');
+    const { ConversationStore } = await import('./context/conversation.js');
+    const { Profile } = await import('./context/profile.js');
+    const { ContextEngine } = await import('./context/engine.js');
+    const { TechniqueStore } = await import('./learning/store.js');
+    const { EventBus } = await import('./lib/event-bus.js');
+
+    const config = {
+      version: '2.0.0',
+      identity: { name: 'Sigil', personality: 'Helpful assistant.' },
+      models: [], defaultModel: '',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
+    };
+
+    const memories = new MemoryStore(db);
+    const conversation = new ConversationStore(db);
+    const profile = new Profile('/tmp/test-profile.md');
+    const store = new TechniqueStore(db);
+    const bus = new EventBus();
+
+    store.add('data analysis', 'Check for missing values before computing averages', undefined, 'auto');
+
+    const engine = new ContextEngine(config, memories, conversation, profile, null, null, bus, store);
+
+    const message = { id: 'test', content: 'analyse this dataset', source: 'tui' as const, timestamp: new Date() };
+    const context = await engine.buildContext(message);
+    const systemPrompt = context[0].content as string;
+
+    if (!systemPrompt.includes('Techniques from past experience')) {
+      throw new Error('Techniques section missing from system prompt');
+    }
+    if (!systemPrompt.includes('data analysis')) {
+      throw new Error('Technique content missing from system prompt');
+    }
+
+    db.close();
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;

@@ -19,6 +19,8 @@ import { Profile } from './profile.js';
 import { type EmbeddingProvider } from './embeddings.js';
 import { type TrimConfig } from '../router/trimmer.js';
 import { type SkillLoader } from './skills.js';
+import type { EventBus } from '../lib/event-bus.js';
+import type { TechniqueStore } from '../learning/store.js';
 
 export class ContextEngine {
   private config: SigilConfig;
@@ -27,6 +29,8 @@ export class ContextEngine {
   private profile: Profile;
   private embeddings: EmbeddingProvider | null;
   private skills: SkillLoader | null;
+  private bus: EventBus | null;
+  private techniques: TechniqueStore | null;
 
   constructor(
     config: SigilConfig,
@@ -35,6 +39,8 @@ export class ContextEngine {
     profile: Profile,
     embeddings: EmbeddingProvider | null,
     skills?: SkillLoader | null,
+    bus?: EventBus | null,
+    techniques?: TechniqueStore | null,
   ) {
     this.config = config;
     this.memories = memories;
@@ -42,6 +48,8 @@ export class ContextEngine {
     this.profile = profile;
     this.embeddings = embeddings;
     this.skills = skills ?? null;
+    this.bus = bus ?? null;
+    this.techniques = techniques ?? null;
   }
 
   /**
@@ -200,6 +208,26 @@ export class ContextEngine {
         .map((r) => `- ${r.memory.content}`)
         .join('\n');
       parts.push(`\n--- Relevant Memories ---\n${memoryText}`);
+    }
+
+    // Inject relevant techniques (skip if no store configured)
+    if (this.techniques) {
+      let techniqueResults = this.techniques.search(currentMessage, 3);
+      // Fall back to most-used techniques when keyword search finds nothing
+      if (techniqueResults.length === 0) {
+        techniqueResults = this.techniques.list().slice(0, 3);
+      }
+      if (techniqueResults.length > 0) {
+        const ids = techniqueResults.map((t) => t.id);
+        const techniqueText = techniqueResults
+          .map((t) => `- ${t.pattern}: ${t.technique}`)
+          .join('\n');
+        this.techniques.markUsed(ids);
+        if (this.bus) {
+          this.bus.emit('learning:technique_used', { ids, query: currentMessage });
+        }
+        parts.push(`\n--- Techniques from past experience ---\n${techniqueText}`);
+      }
     }
 
     return parts.join('\n\n');
