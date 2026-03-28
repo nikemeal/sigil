@@ -45,6 +45,9 @@ import { createHealthTools } from './tools/health-tools.js';
 import { createDiagnosisTools } from './tools/diagnosis-tools.js';
 import { loadLocalTools } from './lib/tool-loader.js';
 import { createExtensionTools } from './tools/extension-tools.js';
+import { TechniqueStore } from './learning/store.js';
+import { Evaluator } from './learning/evaluator.js';
+import { createLearningTools } from './tools/learning-tools.js';
 
 async function main(): Promise<void> {
   console.log('[Sigil] Starting...');
@@ -85,11 +88,14 @@ async function main(): Promise<void> {
     console.log(`[Sigil] Skills: ${discoveredSkills.map((s) => s.name).join(', ')}`);
   }
 
-  // Create context engine
-  const context = new ContextEngine(config, memories, conversation, profile, embeddings, skillLoader);
-
   // Create cost tracker
   const costTracker = new CostTracker(db);
+
+  // Technique store for learned approaches (module 11)
+  const techniqueStore = new TechniqueStore(db);
+
+  // Create context engine
+  const context = new ContextEngine(config, memories, conversation, profile, embeddings, skillLoader, bus, techniqueStore);
 
   // Create tool registry
   const tools = new ToolRegistry(bus);
@@ -117,6 +123,9 @@ async function main(): Promise<void> {
   const scheduler = new Scheduler(bus, taskRunner, taskStore);
   gateway.setTaskComponents(taskStore, scheduler);
   scheduler.start();
+
+  // Auto-evaluate completed tasks and extract reusable techniques (module 11)
+  new Evaluator(bus, pool, techniqueStore);
 
   // Register task tools (agent can create/list background tasks)
   for (const tool of createTaskTools(taskStore, scheduler)) {
@@ -181,6 +190,16 @@ async function main(): Promise<void> {
   for (const tool of createExtensionTools(bus, tools)) {
     tools.register(tool);
   }
+
+  // Register learning tools (module 11)
+  for (const tool of createLearningTools(bus, techniqueStore)) {
+    tools.register(tool);
+  }
+
+  // Learning audit logging
+  bus.on('learning:technique_captured', ({ id, pattern, source }) => {
+    console.log(`[Learning] Technique captured (${source}): ${id.slice(0, 8)} — "${pattern}"`);
+  });
 
   // Extension audit logging
   bus.on('extension:tool_created', ({ name, path }) => {
