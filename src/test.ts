@@ -1078,6 +1078,64 @@ async function run(): Promise<void> {
     db.close();
   });
 
+  await test('Evaluator: instantiates and silently skips when no providers', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { ProviderPool } = await import('./router/provider-pool.js');
+    const { Evaluator } = await import('./learning/evaluator.js');
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const bus = new EventBus();
+    const pool = new ProviderPool({
+      version: '2.0.0',
+      identity: { name: 'test', personality: 'test' },
+      models: [],
+      defaultModel: '',
+      memory: { dbPath: ':memory:', maxRecallResults: 5 },
+      transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
+      skills: { path: 'skills' },
+    });
+    const store = new TechniqueStore(db);
+    const evaluator = new Evaluator(bus, pool, store);
+    if (!evaluator) throw new Error('Evaluator failed to instantiate');
+
+    // With no providers, evaluator silently skips — no error thrown
+    bus.emit('task:complete', {
+      taskId: 'test-task-id',
+      userMessage: 'Summarise this document',
+      result: 'Here is the summary...',
+      cost: 0.001,
+    });
+
+    // Give the async evaluate() a tick to run
+    await new Promise((r) => setTimeout(r, 10));
+
+    // No techniques stored (no providers to call)
+    const all = store.list();
+    if (all.length !== 0) throw new Error(`Expected 0 techniques, got ${all.length}`);
+
+    db.close();
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;
