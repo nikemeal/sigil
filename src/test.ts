@@ -922,6 +922,162 @@ async function run(): Promise<void> {
     if (result !== null) throw new Error(`Expected null, got ${JSON.stringify(result)}`);
   });
 
+  await test('TechniqueStore: add and list', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+      CREATE TRIGGER techniques_ad AFTER DELETE ON techniques BEGIN
+        INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+        VALUES ('delete', old.integer_id, old.pattern, old.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const store = new TechniqueStore(db);
+
+    const id = store.add('summarisation tasks', 'Start with the key conclusion, then supporting points', undefined, 'explicit');
+    if (!id) throw new Error('No id returned');
+
+    const all = store.list();
+    if (all.length !== 1) throw new Error(`Expected 1, got ${all.length}`);
+    if (all[0].pattern !== 'summarisation tasks') throw new Error('Wrong pattern');
+    if (all[0].source !== 'explicit') throw new Error('Wrong source');
+
+    db.close();
+  });
+
+  await test('TechniqueStore: FTS5 search', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+      CREATE TRIGGER techniques_ad AFTER DELETE ON techniques BEGIN
+        INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+        VALUES ('delete', old.integer_id, old.pattern, old.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const store = new TechniqueStore(db);
+
+    store.add('data analysis tasks', 'Always check for nulls before aggregating', undefined, 'auto');
+    store.add('writing emails', 'Keep subject line under 60 characters', undefined, 'auto');
+
+    const results = store.search('data analysis');
+    if (results.length === 0) throw new Error('No results for "data analysis"');
+    if (!results[0].pattern.includes('data analysis')) throw new Error('Wrong technique returned');
+
+    db.close();
+  });
+
+  await test('TechniqueStore: markUsed increments count', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+      CREATE TRIGGER techniques_ad AFTER DELETE ON techniques BEGIN
+        INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+        VALUES ('delete', old.integer_id, old.pattern, old.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const store = new TechniqueStore(db);
+
+    const id = store.add('refactoring', 'Extract method when function exceeds 20 lines', undefined, 'explicit');
+    store.markUsed([id]);
+
+    const all = store.list();
+    if (all[0].usageCount !== 1) throw new Error(`Expected usageCount 1, got ${all[0].usageCount}`);
+    if (!all[0].lastUsed) throw new Error('lastUsed not set');
+
+    db.close();
+  });
+
+  await test('TechniqueStore: remove deletes technique', async () => {
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE techniques (
+        integer_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT UNIQUE NOT NULL,
+        pattern TEXT NOT NULL,
+        technique TEXT NOT NULL,
+        outcome TEXT,
+        source TEXT NOT NULL DEFAULT 'explicit',
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_used TEXT
+      );
+      CREATE VIRTUAL TABLE techniques_fts USING fts5(
+        pattern, technique, content='techniques', content_rowid='integer_id'
+      );
+      CREATE TRIGGER techniques_ai AFTER INSERT ON techniques BEGIN
+        INSERT INTO techniques_fts(rowid, pattern, technique)
+        VALUES (new.integer_id, new.pattern, new.technique);
+      END;
+      CREATE TRIGGER techniques_ad AFTER DELETE ON techniques BEGIN
+        INSERT INTO techniques_fts(techniques_fts, rowid, pattern, technique)
+        VALUES ('delete', old.integer_id, old.pattern, old.technique);
+      END;
+    `);
+    const { TechniqueStore } = await import('./learning/store.js');
+    const store = new TechniqueStore(db);
+
+    const id = store.add('debugging', 'Reproduce in isolation first', undefined, 'explicit');
+    store.remove(id);
+
+    const all = store.list();
+    if (all.length !== 0) throw new Error(`Expected 0, got ${all.length}`);
+
+    db.close();
+  });
+
   // ── Summary ───────────────────────────────────────────────────────
 
   const passed = results.filter((r) => r.passed).length;
