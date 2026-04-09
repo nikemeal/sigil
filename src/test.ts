@@ -1400,15 +1400,13 @@ async function run(): Promise<void> {
   console.log(chalk.dim('\n  Module 12: Auto-Updater'));
 
   await test('Update config: loads defaults when [update] section absent', async () => {
-    // Verify the default shape matches what we expect
-    const defaultConfig = {
-      enabled: true,
-      checkInterval: '24h',
-      remoteBranch: 'origin/main',
-    };
-    if (defaultConfig.enabled !== true) throw new Error('Default enabled should be true');
-    if (defaultConfig.checkInterval !== '24h') throw new Error('Default checkInterval should be 24h');
-    if (defaultConfig.remoteBranch !== 'origin/main') throw new Error('Default remoteBranch should be origin/main');
+    const { loadConfig } = await import('./gateway/config.js');
+    // loadConfig() falls back to defaults when no sigil.toml exists
+    // The worktree has no sigil.toml (it's gitignored), so defaults are returned
+    const config = loadConfig();
+    if (config.update.enabled !== true) throw new Error(`Expected update.enabled=true, got ${config.update.enabled}`);
+    if (config.update.checkInterval !== '24h') throw new Error(`Expected checkInterval='24h', got '${config.update.checkInterval}'`);
+    if (config.update.remoteBranch !== 'origin/main') throw new Error(`Expected remoteBranch='origin/main', got '${config.update.remoteBranch}'`);
   });
 
   await test('parseDuration: "24h" → 86400000', async () => {
@@ -1499,7 +1497,7 @@ async function run(): Promise<void> {
     const names = (tools as import('./types.js').Tool[]).map((t) => t.name);
     if (!names.includes('check_for_updates')) throw new Error('Missing check_for_updates tool');
     if (!names.includes('apply_update')) throw new Error('Missing apply_update tool');
-    if ((tools as import('./types.js').Tool[]).every((t) => t.approval !== 'auto')) throw new Error('Tools should be auto-approved');
+    if (!(tools as import('./types.js').Tool[]).every((t) => t.approval === 'auto')) throw new Error('Tools should be auto-approved');
   });
 
   // ── Summary ───────────────────────────────────────────────────────

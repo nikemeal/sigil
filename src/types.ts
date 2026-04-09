@@ -260,6 +260,7 @@ export interface TechniqueResult {
 // Auto-Updater (module 12)
 // ---------------------------------------------------------------------------
 
+/** Configuration for the auto-update system */
 export interface UpdateConfig {
   /** Whether to auto-check for updates on a schedule */
   enabled: boolean;
@@ -269,6 +270,7 @@ export interface UpdateConfig {
   remoteBranch: string;
 }
 
+/** Result of a git-based update availability check */
 export interface UpdateCheckResult {
   hasUpdate: boolean;
   currentSha: string;
@@ -331,10 +333,10 @@ export interface EventMap {
   'learning:technique_used': { ids: string[]; query: string };
 
   // Auto-updater events (module 12)
-  'update:available':        { currentSha: string; latestSha: string; commitCount: number };
-  'update:applying':         {};
-  'update:complete':         { previousSha: string; newSha: string };
-  'update:failed':           { error: string };
+  'update:available': { currentSha: string; latestSha: string; commitCount: number };
+  'update:applying': {};
+  'update:complete': { previousSha: string; newSha: string };
+  'update:failed': { error: string };
   'update:override_removed': { path: string; reason: string };
   'update:override_flagged': { path: string; reason: string };
 
