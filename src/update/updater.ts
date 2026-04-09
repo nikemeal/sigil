@@ -9,8 +9,7 @@
  * Safe to call concurrently — applying flag prevents double-runs.
  */
 
-import { execSync } from 'node:child_process';
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EventBus } from '../lib/event-bus.js';
