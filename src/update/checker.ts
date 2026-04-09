@@ -30,6 +30,7 @@ export function parseDuration(s: string): number {
 export class UpdateChecker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
 
   constructor(private readonly remoteBranch: string) {}
 
@@ -39,33 +40,35 @@ export class UpdateChecker {
    * Throws if not in a git repository or git is unavailable.
    */
   check(): UpdateCheckResult {
+    const remote = this.remoteBranch.split('/')[0];
     try {
-      execSync('git fetch origin', { stdio: 'pipe' });
+      execSync(`git fetch ${remote}`, { stdio: 'pipe' });
+
+      const currentSha = execSync('git rev-parse HEAD', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+      const latestSha = execSync(`git rev-parse ${this.remoteBranch}`, {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      }).trim();
+
+      if (currentSha === latestSha) {
+        return { hasUpdate: false, currentSha, latestSha, commitCount: 0 };
+      }
+
+      const countStr = execSync(`git rev-list HEAD..${this.remoteBranch} --count`, {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      }).trim();
+
+      const n = parseInt(countStr, 10);
+      return {
+        hasUpdate: true,
+        currentSha,
+        latestSha,
+        commitCount: Number.isNaN(n) ? 0 : n,
+      };
     } catch (err) {
-      throw new Error(`git fetch failed: ${(err as Error).message}`);
+      throw new Error(`Update check failed: ${(err as Error).message}`);
     }
-
-    const currentSha = execSync('git rev-parse HEAD', { encoding: 'utf-8', stdio: 'pipe' }).trim();
-    const latestSha = execSync(`git rev-parse ${this.remoteBranch}`, {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    }).trim();
-
-    if (currentSha === latestSha) {
-      return { hasUpdate: false, currentSha, latestSha, commitCount: 0 };
-    }
-
-    const countStr = execSync(`git rev-list HEAD..${this.remoteBranch} --count`, {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    }).trim();
-
-    return {
-      hasUpdate: true,
-      currentSha,
-      latestSha,
-      commitCount: parseInt(countStr, 10),
-    };
   }
 
   /**
@@ -73,6 +76,9 @@ export class UpdateChecker {
    * then checks every intervalMs. Emits update:available when an update is found.
    */
   start(bus: EventBus, intervalMs: number): void {
+    if (this.running) return;
+    this.running = true;
+    console.log(`[Updater] Update checker started (interval: ${Math.round(intervalMs / 3600000)}h)`);
     this.initialTimer = setTimeout(() => {
       void this.checkAndEmit(bus);
       this.timer = setInterval(() => {
@@ -82,6 +88,7 @@ export class UpdateChecker {
   }
 
   stop(): void {
+    this.running = false;
     if (this.initialTimer) {
       clearTimeout(this.initialTimer);
       this.initialTimer = null;
@@ -90,9 +97,11 @@ export class UpdateChecker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    console.log('[Updater] Update checker stopped');
   }
 
   private async checkAndEmit(bus: EventBus): Promise<void> {
+    if (!this.running) return;
     try {
       const result = this.check();
       if (result.hasUpdate) {
