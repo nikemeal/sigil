@@ -68,8 +68,11 @@ export class Updater {
       }
 
       // Always rebuild (TypeScript source changed)
+      // Use the local tsc binary directly — avoids npm script PATH resolution
+      // issues where 'tsc' resolves to the unrelated 'tsc' npm package instead
+      // of the TypeScript compiler in node_modules/.bin/tsc.
       console.log('[Updater] Building...');
-      execSync('npm run build', { stdio: 'pipe', cwd: this.cwd });
+      execSync('node_modules/.bin/tsc', { stdio: 'pipe', cwd: this.cwd });
       console.log('[Updater] Build complete.');
 
       // Review local/ overrides against updated src/
