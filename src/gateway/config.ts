@@ -11,7 +11,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as TOML from '@iarna/toml';
-import type { SigilConfig, ModelConfig, MemoryConfig, SkillsConfig } from '../types.js';
+import type { SigilConfig, ModelConfig, MemoryConfig, SkillsConfig, UpdateConfig } from '../types.js';
 
 /** Where we look for config, relative to project root */
 const CONFIG_PATH = resolve(process.cwd(), 'sigil.toml');
@@ -36,6 +36,11 @@ const DEFAULTS: SigilConfig = {
   },
   skills: {
     path: 'skills',
+  },
+  update: {
+    enabled: true,
+    checkInterval: '24h',
+    remoteBranch: 'origin/main',
   },
 };
 
@@ -75,6 +80,7 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
   const memory = parsed.memory as Record<string, unknown> | undefined;
   const transports = parsed.transports as Record<string, unknown> | undefined;
   const skills = parsed.skills as Record<string, unknown> | undefined;
+  const update = parsed.update as Record<string, unknown> | undefined;
   const web = transports?.web as Record<string, unknown> | undefined;
   const telegram = transports?.telegram as Record<string, unknown> | undefined;
 
@@ -118,6 +124,11 @@ function mergeConfig(parsed: Record<string, unknown>): SigilConfig {
     skills: {
       path: (skills?.path as string) ?? DEFAULTS.skills.path,
       enabled: parseStringArray(skills?.enabled),
+    },
+    update: {
+      enabled: (update?.enabled as boolean) ?? true,
+      checkInterval: (update?.check_interval as string) ?? '24h',
+      remoteBranch: (update?.remote_branch as string) ?? 'origin/main',
     },
   };
 }

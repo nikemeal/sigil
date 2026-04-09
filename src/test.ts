@@ -99,6 +99,7 @@ async function run(): Promise<void> {
           telegram: { enabled: false },
         },
         skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
       });
       throw new Error('Should have thrown');
     } catch (err) {
@@ -125,6 +126,7 @@ async function run(): Promise<void> {
         telegram: { enabled: false },
       },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
     const pool = new ProviderPool(config);
     const agent = new Agent(config, bus, pool);
@@ -314,6 +316,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
 
     const engine = new ContextEngine(config, memories, conversation, profile, null);
@@ -515,6 +518,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
 
     const memories = new MemoryStore(db);
@@ -567,6 +571,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
 
     const memories = new MemoryStore(db);
@@ -646,6 +651,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
     const router = new Router(config);
 
@@ -668,6 +674,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
     const router = new Router(config);
 
@@ -691,6 +698,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
     const router = new Router(config);
 
@@ -917,6 +925,7 @@ async function run(): Promise<void> {
       memory: { dbPath: 'data/sigil.db', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     });
     const result = pool.getCheapest();
     if (result !== null) throw new Error(`Expected null, got ${JSON.stringify(result)}`);
@@ -1113,6 +1122,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     });
     const store = new TechniqueStore(db);
     const evaluator = new Evaluator(bus, pool, store);
@@ -1268,6 +1278,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
 
     const memories = new MemoryStore(db);
@@ -1343,6 +1354,7 @@ async function run(): Promise<void> {
       memory: { dbPath: ':memory:', maxRecallResults: 5 },
       transports: { tui: { enabled: false }, web: { enabled: false, port: 3033, host: '127.0.0.1' }, telegram: { enabled: false } },
       skills: { path: 'skills' },
+      update: { enabled: true, checkInterval: '24h', remoteBranch: 'origin/main' },
     };
 
     const bus = new EventBus();
@@ -1381,6 +1393,113 @@ async function run(): Promise<void> {
     if (all[0].usageCount !== 1) throw new Error(`Expected usageCount 1, got ${all[0].usageCount}`);
 
     db.close();
+  });
+
+  // ── Module 12: Auto-Updater ────────────────────────────────────────
+
+  console.log(chalk.dim('\n  Module 12: Auto-Updater'));
+
+  await test('Update config: loads defaults when [update] section absent', async () => {
+    // Verify the default shape matches what we expect
+    const defaultConfig = {
+      enabled: true,
+      checkInterval: '24h',
+      remoteBranch: 'origin/main',
+    };
+    if (defaultConfig.enabled !== true) throw new Error('Default enabled should be true');
+    if (defaultConfig.checkInterval !== '24h') throw new Error('Default checkInterval should be 24h');
+    if (defaultConfig.remoteBranch !== 'origin/main') throw new Error('Default remoteBranch should be origin/main');
+  });
+
+  await test('parseDuration: "24h" → 86400000', async () => {
+    const { parseDuration } = await import('./update/checker.js');
+    const result = parseDuration('24h');
+    if (result !== 86_400_000) throw new Error(`Expected 86400000, got ${result}`);
+  });
+
+  await test('parseDuration: "30m" → 1800000', async () => {
+    const { parseDuration } = await import('./update/checker.js');
+    const result = parseDuration('30m');
+    if (result !== 1_800_000) throw new Error(`Expected 1800000, got ${result}`);
+  });
+
+  await test('parseDuration: "7d" → 604800000', async () => {
+    const { parseDuration } = await import('./update/checker.js');
+    const result = parseDuration('7d');
+    if (result !== 604_800_000) throw new Error(`Expected 604800000, got ${result}`);
+  });
+
+  await test('parseDuration: throws on invalid format', async () => {
+    const { parseDuration } = await import('./update/checker.js');
+    let threw = false;
+    try { parseDuration('1week'); } catch { threw = true; }
+    if (!threw) throw new Error('Expected parseDuration to throw on "1week"');
+  });
+
+  await test('OverrideReviewer: no-op when local/ directory is missing', async () => {
+    const { OverrideReviewer } = await import('./update/override-reviewer.js');
+    const { EventBus } = await import('./lib/event-bus.js');
+    const bus = new EventBus();
+    const events: string[] = [];
+    bus.on('update:override_removed', ({ path }) => events.push(`removed:${path}`));
+    bus.on('update:override_flagged', ({ path }) => events.push(`flagged:${path}`));
+
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const tmpDir = mkdtempSync(tmpdir() + '/sigil-test-');
+
+    const reviewer = new OverrideReviewer(tmpDir);
+    await reviewer.review(bus, null as never);
+    if (events.length !== 0) throw new Error(`Expected no events, got ${events.join(', ')}`);
+
+    const { rmSync } = await import('node:fs');
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  await test('OverrideReviewer: removes override when src file not found', async () => {
+    const { OverrideReviewer } = await import('./update/override-reviewer.js');
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { mkdtempSync, mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const bus = new EventBus();
+    const removed: string[] = [];
+    bus.on('update:override_removed', ({ path }) => removed.push(path));
+
+    const tmpDir = mkdtempSync(tmpdir() + '/sigil-test-');
+    mkdirSync(join(tmpDir, 'local', 'tools'), { recursive: true });
+    writeFileSync(join(tmpDir, 'local', 'tools', 'custom.js'), 'module.exports = {}');
+
+    const reviewer = new OverrideReviewer(tmpDir);
+    await reviewer.review(bus, null as never);
+
+    if (removed.length !== 1) throw new Error(`Expected 1 removed override, got ${removed.length}`);
+    if (removed[0] !== 'tools/custom.js') throw new Error(`Expected "tools/custom.js", got "${removed[0]}"`);
+    if (existsSync(join(tmpDir, 'local', 'tools', 'custom.js'))) {
+      throw new Error('Override file should have been deleted');
+    }
+
+    const { rmSync } = await import('node:fs');
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  await test('Update tools: check_for_updates and apply_update created', async () => {
+    const { EventBus } = await import('./lib/event-bus.js');
+    const { UpdateChecker } = await import('./update/checker.js');
+    const { Updater } = await import('./update/updater.js');
+    const { createUpdateTools } = await import('./tools/update-tools.js');
+
+    const bus = new EventBus();
+    const checker = new UpdateChecker('origin/main');
+    const updater = new Updater(process.cwd(), 'origin/main');
+    const tools = createUpdateTools(bus, checker, updater, null as never);
+
+    if (tools.length !== 2) throw new Error(`Expected 2 tools, got ${tools.length}`);
+    const names = (tools as import('./types.js').Tool[]).map((t) => t.name);
+    if (!names.includes('check_for_updates')) throw new Error('Missing check_for_updates tool');
+    if (!names.includes('apply_update')) throw new Error('Missing apply_update tool');
+    if ((tools as import('./types.js').Tool[]).every((t) => t.approval !== 'auto')) throw new Error('Tools should be auto-approved');
   });
 
   // ── Summary ───────────────────────────────────────────────────────

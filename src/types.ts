@@ -188,6 +188,7 @@ export interface SigilConfig {
   memory: MemoryConfig;
   transports: TransportsConfig;
   skills: SkillsConfig;
+  update: UpdateConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +257,26 @@ export interface TechniqueResult {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-Updater (module 12)
+// ---------------------------------------------------------------------------
+
+export interface UpdateConfig {
+  /** Whether to auto-check for updates on a schedule */
+  enabled: boolean;
+  /** How often to check — e.g. "24h", "30m", "7d" */
+  checkInterval: string;
+  /** Remote tracking branch — e.g. "origin/main" */
+  remoteBranch: string;
+}
+
+export interface UpdateCheckResult {
+  hasUpdate: boolean;
+  currentSha: string;
+  latestSha: string;
+  commitCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // Event Bus — typed events for inter-component communication
 // ---------------------------------------------------------------------------
 
@@ -308,6 +329,14 @@ export interface EventMap {
   // Learning events (module 11)
   'learning:technique_captured': { id: string; pattern: string; source: 'explicit' | 'auto' };
   'learning:technique_used': { ids: string[]; query: string };
+
+  // Auto-updater events (module 12)
+  'update:available':        { currentSha: string; latestSha: string; commitCount: number };
+  'update:applying':         {};
+  'update:complete':         { previousSha: string; newSha: string };
+  'update:failed':           { error: string };
+  'update:override_removed': { path: string; reason: string };
+  'update:override_flagged': { path: string; reason: string };
 
   // Broadcast — send to all connected transports
   'broadcast:response': Response;

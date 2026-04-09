@@ -72,3 +72,10 @@ enabled = false
 # [skills]
 # path = "skills"
 # enabled = ["sigil-help"]
+
+# ── Auto-Updater ─────────────────────────────────────────────────────
+# Sigil can check for and apply updates from its git remote automatically.
+# [update]
+# enabled = true
+# check_interval = "24h"     # how often to check: h (hours), m (minutes), d (days)
+# remote_branch = "origin/main"
