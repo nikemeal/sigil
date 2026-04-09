@@ -48,8 +48,20 @@ import { createExtensionTools } from './tools/extension-tools.js';
 import { TechniqueStore } from './learning/store.js';
 import { Evaluator } from './learning/evaluator.js';
 import { createLearningTools } from './tools/learning-tools.js';
+import { UpdateChecker, parseDuration } from './update/checker.js';
+import { Updater } from './update/updater.js';
+import { createUpdateTools } from './tools/update-tools.js';
 
 async function main(): Promise<void> {
+  // Handle CLI subcommands before starting the full service
+  const subcommand = process.argv[2];
+  if (subcommand === 'update') {
+    const { runUpdateCli } = await import('./cli/update.js');
+    const checkOnly = process.argv.includes('--check');
+    await runUpdateCli(checkOnly);
+    return;
+  }
+
   console.log('[Sigil] Starting...');
 
   // Load .env before anything else (API keys, etc.)
@@ -196,6 +208,40 @@ async function main(): Promise<void> {
     tools.register(tool);
   }
 
+  // Create auto-updater components (module 12)
+  const updateChecker = new UpdateChecker(config.update.remoteBranch);
+  const updater = new Updater(process.cwd(), config.update.remoteBranch);
+
+  // Register update tools
+  for (const tool of createUpdateTools(bus, updateChecker, updater, pool)) {
+    tools.register(tool);
+  }
+
+  // Start scheduled update checks if enabled
+  if (config.update.enabled) {
+    updateChecker.start(bus, parseDuration(config.update.checkInterval));
+  }
+
+  // Update audit logging
+  bus.on('update:available', ({ commitCount, latestSha }) => {
+    console.log(`[Updater] Update available: ${commitCount} commit(s) behind (${latestSha.slice(0, 7)})`);
+  });
+  bus.on('update:applying', () => {
+    console.log('[Updater] Applying update...');
+  });
+  bus.on('update:complete', ({ previousSha, newSha }) => {
+    console.log(`[Updater] Updated: ${previousSha.slice(0, 7)} → ${newSha.slice(0, 7)}`);
+  });
+  bus.on('update:failed', ({ error }) => {
+    console.warn(`[Updater] Update failed: ${error}`);
+  });
+  bus.on('update:override_removed', ({ path, reason }) => {
+    console.log(`[Updater] Override removed: ${path} — ${reason}`);
+  });
+  bus.on('update:override_flagged', ({ path, reason }) => {
+    console.warn(`[Updater] Override flagged for review: ${path} — ${reason}`);
+  });
+
   // Learning audit logging
   bus.on('learning:technique_captured', ({ id, pattern, source }) => {
     console.log(`[Learning] Technique captured (${source}): ${id.slice(0, 8)} — "${pattern}"`);
@@ -219,6 +265,7 @@ async function main(): Promise<void> {
     bus.emit('system:shutdown', { reason: signal });
     healthMonitor.stop();
     scheduler.stop();
+    updateChecker.stop();
     if (telegramTransport) await telegramTransport.stop();
     await wsServer.stop();
     closeDatabase();
