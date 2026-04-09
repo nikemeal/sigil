@@ -32,21 +32,28 @@ export class Updater {
     }
     this.applying = true;
 
-    const previousSha = execSync('git rev-parse HEAD', {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-      cwd: this.cwd,
-    }).trim();
-
     try {
       bus.emit('update:applying', {});
+
+      const slashIndex = this.remoteBranch.indexOf('/');
+      if (slashIndex === -1) {
+        throw new Error(
+          `Invalid remoteBranch format: "${this.remoteBranch}". Expected "remote/branch" (e.g. "origin/main").`,
+        );
+      }
+
       console.log(`[Updater] Applying update from ${this.remoteBranch}...`);
+
+      const previousSha = execSync('git rev-parse HEAD', {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+        cwd: this.cwd,
+      }).trim();
 
       // Record package.json content before pull to detect dependency changes
       const pkgBefore = this.readFile('package.json');
 
       // Split "origin/main" → remote="origin", branch="main"
-      const slashIndex = this.remoteBranch.indexOf('/');
       const remote = this.remoteBranch.slice(0, slashIndex);
       const branch = this.remoteBranch.slice(slashIndex + 1);
 
