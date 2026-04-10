@@ -90,14 +90,10 @@ mkdir -p "${INSTALL_DIR}/data"
 mkdir -p "${INSTALL_DIR}/local"
 mkdir -p "${INSTALL_DIR}/skills"
 
-# Install dependencies (including devDependencies for TypeScript build)
+# Install runtime dependencies (dist/ is pre-built in the repo)
 echo "Installing dependencies..."
 cd "${INSTALL_DIR}"
-npm install
-
-# Build TypeScript → dist/
-echo "Building..."
-npx tsc
+npm install --omit=dev
 
 # Fix ownership
 chown -R "${SIGIL_USER}:${SIGIL_USER}" "${INSTALL_DIR}"
@@ -187,7 +183,7 @@ case "${1:-help}" in
     sudo ${EDITOR:-nano} "${INSTALL_DIR}/.env"
     ;;
   build)
-    cd "${INSTALL_DIR}" && npm install && npx tsc
+    cd "${INSTALL_DIR}" && npm install --omit=dev
     echo "Build complete."
     ;;
   test)
@@ -196,9 +192,8 @@ case "${1:-help}" in
   update)
     cd "${INSTALL_DIR}"
     echo "Pulling latest from git..."
-    sudo -u sigil git pull
-    sudo -u sigil npm install --production
-    sudo -u sigil npx tsc
+    git pull
+    npm install --omit=dev
     sudo systemctl restart sigil
     echo "Updated and restarted."
     ;;
