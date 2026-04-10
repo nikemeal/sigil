@@ -594,7 +594,7 @@ async function main() {
         writeConfig(state);
     }
     // Build and start
-    run('npx tsc', 'Building');
+    run('node_modules/.bin/tsc', 'Building');
     if (hasSystemd()) {
         run('sudo systemctl restart sigil', 'Starting service');
         console.log(chalk.bold('\n  Setup complete!\n'));

@@ -100,7 +100,7 @@ export default tool;
 
         // Validate compilation
         try {
-          execSync('npx tsc --noEmit', {
+          execSync('node_modules/.bin/tsc --noEmit', {
             cwd: PROJECT_ROOT,
             timeout: 30_000,
             stdio: 'pipe',
