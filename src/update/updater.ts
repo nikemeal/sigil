@@ -63,16 +63,19 @@ export class Updater {
       const pkgAfter = this.readFile('package.json');
       if (pkgBefore !== pkgAfter) {
         console.log('[Updater] package.json changed — running npm install...');
-        execSync('npm install', { stdio: 'pipe', cwd: this.cwd });
+        execSync('npm install --include=dev', { stdio: 'pipe', cwd: this.cwd });
         console.log('[Updater] npm install complete.');
       }
 
       // Always rebuild (TypeScript source changed)
-      // Use the local tsc binary directly — avoids npm script PATH resolution
-      // issues where 'tsc' resolves to the unrelated 'tsc' npm package instead
-      // of the TypeScript compiler in node_modules/.bin/tsc.
+      // Use an absolute path to the TypeScript compiler to avoid PATH-based
+      // resolution picking up the unrelated tsc@2.0.4 stub package via npx.
+      const tscScript = join(this.cwd, 'node_modules', 'typescript', 'bin', 'tsc');
+      if (!existsSync(tscScript)) {
+        throw new Error(`TypeScript compiler not found at ${tscScript}. Run: npm install --include=dev`);
+      }
       console.log('[Updater] Building...');
-      execSync('node_modules/.bin/tsc', { stdio: 'pipe', cwd: this.cwd });
+      execSync(`node "${tscScript}"`, { stdio: 'pipe', cwd: this.cwd });
       console.log('[Updater] Build complete.');
 
       // Review local/ overrides against updated src/
