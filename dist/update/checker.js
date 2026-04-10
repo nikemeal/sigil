@@ -1,0 +1,113 @@
+/**
+ * Update Checker
+ *
+ * Checks whether a newer version of Sigil is available by comparing
+ * the local HEAD to a remote tracking branch. Runs git fetch + rev-parse.
+ *
+ * Also provides parseDuration() for converting config strings like "24h"
+ * to milliseconds.
+ */
+import { execSync } from 'node:child_process';
+const INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 minutes
+/** Convert duration string ("24h", "30m", "7d") to milliseconds. */
+export function parseDuration(s) {
+    const match = s.match(/^(\d+)(h|m|d)$/);
+    if (!match) {
+        throw new Error(`Invalid duration: "${s}". Use format like "24h", "30m", "7d".`);
+    }
+    const n = parseInt(match[1], 10);
+    const unit = match[2];
+    if (unit === 'h')
+        return n * 60 * 60 * 1000;
+    if (unit === 'm')
+        return n * 60 * 1000;
+    return n * 24 * 60 * 60 * 1000; // 'd'
+}
+export class UpdateChecker {
+    remoteBranch;
+    timer = null;
+    initialTimer = null;
+    running = false;
+    constructor(remoteBranch) {
+        this.remoteBranch = remoteBranch;
+    }
+    /**
+     * Check whether an update is available.
+     * Runs git fetch then compares HEAD to the remote tracking branch.
+     * Throws if not in a git repository or git is unavailable.
+     */
+    check() {
+        const remote = this.remoteBranch.split('/')[0];
+        try {
+            execSync(`git fetch ${remote}`, { stdio: 'pipe' });
+            const currentSha = execSync('git rev-parse HEAD', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+            const latestSha = execSync(`git rev-parse ${this.remoteBranch}`, {
+                encoding: 'utf-8',
+                stdio: 'pipe',
+            }).trim();
+            if (currentSha === latestSha) {
+                return { hasUpdate: false, currentSha, latestSha, commitCount: 0 };
+            }
+            const countStr = execSync(`git rev-list HEAD..${this.remoteBranch} --count`, {
+                encoding: 'utf-8',
+                stdio: 'pipe',
+            }).trim();
+            const n = parseInt(countStr, 10);
+            return {
+                hasUpdate: true,
+                currentSha,
+                latestSha,
+                commitCount: Number.isNaN(n) ? 0 : n,
+            };
+        }
+        catch (err) {
+            throw new Error(`Update check failed: ${err.message}`);
+        }
+    }
+    /**
+     * Start scheduled checks. Waits INITIAL_DELAY_MS before the first check,
+     * then checks every intervalMs. Emits update:available when an update is found.
+     */
+    start(bus, intervalMs) {
+        if (this.running)
+            return;
+        this.running = true;
+        console.log(`[Updater] Update checker started (interval: ${Math.round(intervalMs / 3600000)}h)`);
+        this.initialTimer = setTimeout(() => {
+            void this.checkAndEmit(bus);
+            this.timer = setInterval(() => {
+                void this.checkAndEmit(bus);
+            }, intervalMs);
+        }, INITIAL_DELAY_MS);
+    }
+    stop() {
+        this.running = false;
+        if (this.initialTimer) {
+            clearTimeout(this.initialTimer);
+            this.initialTimer = null;
+        }
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+        console.log('[Updater] Update checker stopped');
+    }
+    async checkAndEmit(bus) {
+        if (!this.running)
+            return;
+        try {
+            const result = this.check();
+            if (result.hasUpdate) {
+                bus.emit('update:available', {
+                    currentSha: result.currentSha,
+                    latestSha: result.latestSha,
+                    commitCount: result.commitCount,
+                });
+            }
+        }
+        catch (err) {
+            console.warn('[Updater] Scheduled check failed:', err.message);
+        }
+    }
+}
+//# sourceMappingURL=checker.js.map

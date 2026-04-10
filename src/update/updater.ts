@@ -1,9 +1,12 @@
 /**
  * Updater
  *
- * Applies a git update: pulls from remote, installs dependencies if needed,
- * rebuilds the TypeScript project, runs the OverrideReviewer, then
- * self-restarts the process using spawn + exit.
+ * Applies a git update: pulls from remote (which includes pre-compiled dist/),
+ * installs dependencies if package.json changed, runs the OverrideReviewer,
+ * then self-restarts the process using spawn + exit.
+ *
+ * No TypeScript compilation step — dist/ is committed to the repo so git pull
+ * delivers updated JS directly.
  *
  * Emits update:applying, update:complete, and update:failed events.
  * Safe to call concurrently — applying flag prevents double-runs.
@@ -66,17 +69,6 @@ export class Updater {
         execSync('npm install --include=dev', { stdio: 'pipe', cwd: this.cwd });
         console.log('[Updater] npm install complete.');
       }
-
-      // Always rebuild (TypeScript source changed)
-      // Use an absolute path to the TypeScript compiler to avoid PATH-based
-      // resolution picking up the unrelated tsc@2.0.4 stub package via npx.
-      const tscScript = join(this.cwd, 'node_modules', 'typescript', 'bin', 'tsc');
-      if (!existsSync(tscScript)) {
-        throw new Error(`TypeScript compiler not found at ${tscScript}. Run: npm install --include=dev`);
-      }
-      console.log('[Updater] Building...');
-      execSync(`node "${tscScript}"`, { stdio: 'pipe', cwd: this.cwd });
-      console.log('[Updater] Build complete.');
 
       // Review local/ overrides against updated src/
       const reviewer = new OverrideReviewer(this.cwd);

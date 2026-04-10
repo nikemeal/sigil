@@ -1,0 +1,1 @@
+{"version":3,"file":"profile.d.ts","sourceRoot":"","sources":["../../src/context/profile.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;GAWG;AAYH,qBAAa,OAAO;IAClB,OAAO,CAAC,IAAI,CAAS;IACrB,OAAO,CAAC,OAAO,CAAS;gBAEZ,WAAW,EAAE,MAAM;IAkB/B,iEAAiE;IACjE,GAAG,IAAI,MAAM;IAIb,qDAAqD;IACrD,MAAM,CAAC,UAAU,EAAE,MAAM,GAAG,IAAI;IAKhC,0DAA0D;IAC1D,MAAM,IAAI,IAAI;IAMd,OAAO,CAAC,IAAI;CAGb"}

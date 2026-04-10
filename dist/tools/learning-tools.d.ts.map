@@ -1,0 +1,1 @@
+{"version":3,"file":"learning-tools.d.ts","sourceRoot":"","sources":["../../src/tools/learning-tools.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAEH,OAAO,KAAK,EAAE,IAAI,EAAE,MAAM,aAAa,CAAC;AACxC,OAAO,KAAK,EAAE,QAAQ,EAAE,MAAM,qBAAqB,CAAC;AACpD,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,sBAAsB,CAAC;AAE3D,wBAAgB,mBAAmB,CAAC,GAAG,EAAE,QAAQ,EAAE,KAAK,EAAE,cAAc,GAAG,IAAI,EAAE,CAuFhF"}

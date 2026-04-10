@@ -1,6 +1,5 @@
 # Dependencies & build
 node_modules/
-dist/
 
 # Agent-owned overrides (unique per installation, never committed)
 local/
